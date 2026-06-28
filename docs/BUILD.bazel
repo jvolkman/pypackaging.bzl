@@ -1,0 +1,33 @@
+"""Build rules for documentation."""
+
+load("@bazel_lib//lib:diff_test.bzl", "diff_test")
+load("@bazel_lib//lib:write_source_files.bzl", "write_source_files")
+load("@io_bazel_stardoc//stardoc:stardoc.bzl", "stardoc")
+load("@rules_java//java:java_binary.bzl", "java_binary")
+
+java_binary(
+    name = "renderer",
+    main_class = "com/google/devtools/build/stardoc/renderer/RendererMain",
+    runtime_deps = ["@stardoc-prebuilt//jar"],
+)
+
+stardoc(
+    name = "pypackaging_doc",
+    out = "pypackaging_generated.md",
+    input = "@pypackaging.bzl//:pypackaging.bzl",
+    renderer = ":renderer",
+    deps = ["@pypackaging.bzl//:pypackaging"],
+)
+
+diff_test(
+    name = "pypackaging_test",
+    file1 = "pypackaging.md",
+    file2 = "pypackaging_generated.md",
+)
+
+write_source_files(
+    name = "update",
+    files = {
+        "pypackaging.md": "pypackaging_generated.md",
+    },
+)
