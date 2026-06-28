@@ -25,6 +25,9 @@ jobs:
       - uses: bazel-contrib/setup-bazel@0.15.0
       - name: Run Tests
         run: bazel test //...
+      - name: Run Doc Tests
+        run: bazel test //...
+        working-directory: docs
   pre-commit:
     runs-on: ubuntu-latest
     steps:
