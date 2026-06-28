@@ -28,6 +28,9 @@ jobs:
       - name: Run Doc Tests
         run: bazel test //...
         working-directory: docs
+      - name: Run E2E Tests
+        run: bazel test //...
+        working-directory: e2e/smoke
   pre-commit:
     runs-on: ubuntu-latest
     steps:

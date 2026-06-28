@@ -1,0 +1,12 @@
+"""Bazel module for pypackaging.bzl smoke tests."""
+
+module(name = "pypackaging_smoke_test")
+
+bazel_dep(name = "pypackaging.bzl", version = "0.0.0")
+bazel_dep(name = "re.bzl", version = "0.3.1")
+bazel_dep(name = "platforms", version = "1.0.0")
+
+local_path_override(
+    module_name = "pypackaging.bzl",
+    path = "../..",
+)
