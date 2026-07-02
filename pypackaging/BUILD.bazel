@@ -9,6 +9,7 @@ bzl_library(
     srcs = ["pypackaging.bzl"],
     deps = [
         "//pypackaging/private/markers",
+        "//pypackaging/private/requirements",
         "//pypackaging/private/specifiers",
         "//pypackaging/private/tags",
         "//pypackaging/private/utils",

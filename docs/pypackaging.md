@@ -51,6 +51,30 @@ Parses a PEP 508 marker string into an AST-like structure.
 A list representing the parsed marker tree.
 
 
+<a id="pypackaging.requirements.parse"></a>
+
+## pypackaging.requirements.parse
+
+<pre>
+load("@pypackaging.bzl", "pypackaging")
+
+pypackaging.requirements.parse(<a href="#pypackaging.requirements.parse-req_str">req_str</a>)
+</pre>
+
+Parses a requirement string.
+
+**PARAMETERS**
+
+
+| Name  | Description | Default Value |
+| :------------- | :------------- | :------------- |
+| <a id="pypackaging.requirements.parse-req_str"></a>req_str |  The requirement string to parse.   |  none |
+
+**RETURNS**
+
+A struct representing the parsed requirement.
+
+
 <a id="pypackaging.specifiers.contains"></a>
 
 ## pypackaging.specifiers.contains
