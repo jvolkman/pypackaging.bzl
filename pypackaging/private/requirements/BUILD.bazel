@@ -1,18 +1,13 @@
-"""Public build rules for pypackaging library."""
-
 load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
 
 package(default_visibility = ["//visibility:public"])
 
 bzl_library(
-    name = "pypackaging",
-    srcs = ["pypackaging.bzl"],
+    name = "requirements",
+    srcs = ["requirements.bzl"],
     deps = [
         "//pypackaging/private/markers",
-        "//pypackaging/private/requirements",
         "//pypackaging/private/specifiers",
-        "//pypackaging/private/tags",
         "//pypackaging/private/utils",
-        "//pypackaging/private/version",
     ],
 )
