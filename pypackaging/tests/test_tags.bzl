@@ -4,7 +4,7 @@ load("@rules_testing//lib:analysis_test.bzl", "analysis_test", "test_suite")
 load("@rules_testing//lib:util.bzl", "util")
 
 # buildifier: disable=bzl-visibility
-load("//pypackaging/private/tags:tags.bzl", "get_supported")
+load("//pypackaging/private/tags:tags.bzl", "get_supported", "tags_internal")
 
 def _test_get_supported_basic_impl(env, _target):
     tags = get_supported(version = "311", platforms = ["any"], impl = "cp", abis = ["none"])
@@ -66,6 +66,7 @@ def _test_expand_macosx(name):
 
 def _test_expand_manylinux_pep600_impl(env, _target):
     tags = get_supported(version = "311", platforms = ["manylinux_2_17_x86_64"], impl = "cp", abis = ["none"])
+    env.expect.that_collection(tags).contains("cp311-none-linux_x86_64")
     env.expect.that_collection(tags).contains("cp311-none-manylinux_2_17_x86_64")
 
     # Should contain legacy alias
@@ -81,6 +82,7 @@ def _test_expand_manylinux_pep600(name):
 
 def _test_expand_manylinux_legacy_impl(env, _target):
     tags = get_supported(version = "311", platforms = ["manylinux2014_x86_64"], impl = "cp", abis = ["none"])
+    env.expect.that_collection(tags).contains("cp311-none-linux_x86_64")
     env.expect.that_collection(tags).contains("cp311-none-manylinux_2_17_x86_64")
     env.expect.that_collection(tags).contains("cp311-none-manylinux2014_x86_64")
 
@@ -90,6 +92,7 @@ def _test_expand_manylinux_legacy(name):
 
 def _test_expand_musllinux_impl(env, _target):
     tags = get_supported(version = "311", platforms = ["musllinux_1_2_x86_64"], impl = "cp", abis = ["none"])
+    env.expect.that_collection(tags).contains("cp311-none-linux_x86_64")
     env.expect.that_collection(tags).contains("cp311-none-musllinux_1_2_x86_64")
     env.expect.that_collection(tags).contains("cp311-none-musllinux_1_1_x86_64")
     env.expect.that_collection(tags).contains("cp311-none-musllinux_1_0_x86_64")
@@ -140,6 +143,47 @@ def _test_freethreaded(name):
     util.helper_target(native.filegroup, name = name + "_subject")
     analysis_test(name = name, target = name + "_subject", impl = _test_freethreaded_impl)
 
+def _test_expand_allowed_platforms_manylinux_impl(env, _target):
+    platforms = tags_internal.expand_allowed_platforms(["manylinux_2_17_x86_64"])
+    env.expect.that_collection(platforms).contains_exactly([
+        "linux_x86_64",
+        "manylinux_2_17_x86_64",
+        "manylinux2014_x86_64",
+        "manylinux_2_16_x86_64",
+        "manylinux_2_15_x86_64",
+        "manylinux_2_14_x86_64",
+        "manylinux_2_13_x86_64",
+        "manylinux_2_12_x86_64",
+        "manylinux2010_x86_64",
+        "manylinux_2_11_x86_64",
+        "manylinux_2_10_x86_64",
+        "manylinux_2_9_x86_64",
+        "manylinux_2_8_x86_64",
+        "manylinux_2_7_x86_64",
+        "manylinux_2_6_x86_64",
+        "manylinux_2_5_x86_64",
+        "manylinux1_x86_64",
+    ])
+
+def _test_expand_allowed_platforms_manylinux(name):
+    util.helper_target(native.filegroup, name = name + "_subject")
+    analysis_test(name = name, target = name + "_subject", impl = _test_expand_allowed_platforms_manylinux_impl)
+
+def _test_expand_allowed_platforms_armv8l_impl(env, _target):
+    platforms = tags_internal.expand_allowed_platforms(["manylinux_2_17_armv8l"])
+    env.expect.that_collection(platforms).contains_exactly([
+        "linux_armv8l",
+        "linux_armv7l",
+        "manylinux_2_17_armv8l",
+        "manylinux2014_armv8l",
+        "manylinux_2_17_armv7l",
+        "manylinux2014_armv7l",
+    ])
+
+def _test_expand_allowed_platforms_armv8l(name):
+    util.helper_target(native.filegroup, name = name + "_subject")
+    analysis_test(name = name, target = name + "_subject", impl = _test_expand_allowed_platforms_armv8l_impl)
+
 def tags_test_suite(name):
     test_suite(
         name = name,
@@ -153,5 +197,7 @@ def tags_test_suite(name):
             _test_expand_android,
             _test_expand_ios,
             _test_freethreaded,
+            _test_expand_allowed_platforms_manylinux,
+            _test_expand_allowed_platforms_armv8l,
         ],
     )

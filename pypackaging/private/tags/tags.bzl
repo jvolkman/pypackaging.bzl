@@ -15,6 +15,10 @@ load("//pypackaging/private/tags:manylinux.bzl", "manylinux_platforms")
 load("//pypackaging/private/tags:musllinux.bzl", "musllinux_platforms")
 load("//pypackaging/private/tags:utils.bzl", "get_python_version")
 
+_ARCH_FALLBACKS = {
+    "armv8l": ["armv8l", "armv7l"],
+}
+
 def _expand_platform(platform):
     if platform.startswith("macosx_"):
         parts = platform.split("_")
@@ -31,12 +35,20 @@ def _expand_platform(platform):
                 major = int(parts[1])
                 minor = int(parts[2])
                 arch = "_".join(parts[3:])
-                return manylinux_platforms((major, minor), arch)
+                archs = _ARCH_FALLBACKS.get(arch, [arch])
+
+                result = []
+                for a in archs:
+                    result.append("linux_" + a)
+                for a in archs:
+                    result.extend(manylinux_platforms((major, minor), a))
+                return result
     elif platform.startswith("manylinux"):
         parts = platform.split("_", 1)
         if len(parts) == 2:
             prefix = parts[0]
             arch = parts[1]
+            archs = _ARCH_FALLBACKS.get(arch, [arch])
             legacy_to_pep600 = {
                 "manylinux1": (2, 5),
                 "manylinux2010": (2, 12),
@@ -44,7 +56,12 @@ def _expand_platform(platform):
             }
             version = legacy_to_pep600.get(prefix)
             if version:
-                return manylinux_platforms(version, arch)
+                result = []
+                for a in archs:
+                    result.append("linux_" + a)
+                for a in archs:
+                    result.extend(manylinux_platforms(version, a))
+                return result
     elif platform.startswith("musllinux_"):
         parts = platform.split("_")
         if len(parts) >= 4:
@@ -52,7 +69,14 @@ def _expand_platform(platform):
                 major = int(parts[1])
                 minor = int(parts[2])
                 arch = "_".join(parts[3:])
-                return musllinux_platforms((major, minor), arch)
+                archs = _ARCH_FALLBACKS.get(arch, [arch])
+
+                result = []
+                for a in archs:
+                    result.append("linux_" + a)
+                for a in archs:
+                    result.extend(musllinux_platforms((major, minor), a))
+                return result
     elif platform.startswith("android_"):
         parts = platform.split("_")
         if len(parts) >= 3:
@@ -173,4 +197,8 @@ def parse_tag(tag, validate_order = False):
 tags = struct(
     get_supported = get_supported,
     parse_tag = parse_tag,
+)
+
+tags_internal = struct(
+    expand_allowed_platforms = _expand_allowed_platforms,
 )
