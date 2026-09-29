@@ -161,6 +161,8 @@ def make_version(epoch, release, pre, post, dev, local, version_str = ""):
         is_devrelease = (dev != None),
     )
 
+_DIGITS_AND_DOT = ".0123456789"
+
 def parse_version(version_str):
     """Parses a version string into a struct.
 
@@ -170,6 +172,13 @@ def parse_version(version_str):
     Returns:
         A struct representing the parsed version.
     """
+    if version_str and not version_str.lstrip(_DIGITS_AND_DOT):
+        parts = version_str.split(".")
+        if "" in parts:
+            _fail_invalid_version(version_str)
+        release = tuple([int(p) for p in parts])
+        return make_version(0, release, None, None, None, None, version_str)
+
     m = _VERSION_RE.fullmatch(version_str)
     if not m:
         _fail_invalid_version(version_str)
