@@ -16,76 +16,61 @@ def _post_base(v):
 def _earliest_prerelease(v):
     return make_version(v.epoch, v.release, v.pre, v.post, ("dev", 0), None)
 
-_specifier_regex_str = r"""
+_PRE_POST_DEV_RE_STR = r"""
 (?:
-    (?:
-        ===
-        \s*
-        [^\s;)]*
-    )
-    |
-    (?:
-        (?:==|!=)
-        \s*
-        v?
-        (?:[0-9]+!)?
-        [0-9]+(?:\.[0-9]+)*
-        (?:
-            \.\*
-            |
-            (?:
-                [-_\.]?
-                (alpha|beta|preview|pre|a|b|c|rc)
-                [-_\.]?
-                [0-9]*
-            )?
-            (?:
-                (?:-[0-9]+)|(?:[-_\.]?(post|rev|r)[-_\.]?[0-9]*)
-            )?
-            (?:[-_\.]?dev[-_\.]?[0-9]*)?
-            (?:\+[a-z0-9]+(?:[-_\.][a-z0-9]+)*)?
-        )?
-    )
-    |
-    (?:
-        (?:~=)
-        \s*
-        v?
-        (?:[0-9]+!)?
-        [0-9]+(?:\.[0-9]+)+
-        (?:
-            [-_\.]?
-            (alpha|beta|preview|pre|a|b|c|rc)
-            [-_\.]?
-            [0-9]*
-        )?
-        (?:
-            (?:-[0-9]+)|(?:[-_\.]?(post|rev|r)[-_\.]?[0-9]*)
-        )?
-        (?:[-_\.]?dev[-_\.]?[0-9]*)?
-    )
-    |
-    (?:
-        (?:<=|>=|<|>)
-        \s*
-        v?
-        (?:[0-9]+!)?
-        [0-9]+(?:\.[0-9]+)*
-        (?:
-            [-_\.]?
-            (alpha|beta|preview|pre|a|b|c|rc)
-            [-_\.]?
-            [0-9]*
-        )?
-        (?:
-            (?:-[0-9]+)|(?:[-_\.]?(post|rev|r)[-_\.]?[0-9]*)
-        )?
-        (?:[-_\.]?dev[-_\.]?[0-9]*)?
-    )
-)
+    [-_\.]?
+    (?:alpha|beta|preview|pre|a|b|c|rc)
+    [-_\.]?
+    [0-9]*
+)?
+(?:
+    (?:-[0-9]+)|(?:[-_\.]?(?:post|rev|r)[-_\.]?[0-9]*)
+)?
+(?:[-_\.]?dev[-_\.]?[0-9]*)?
 """
 
-_SPECIFIER_RE = re.compile(r"\s*" + _specifier_regex_str + r"\s*", re.X | re.I)
+_EQ_VERSION_RE = re.compile(
+    r"""
+    v?
+    (?:[0-9]+!)?
+    [0-9]+(?:\.[0-9]+)*
+    (?:
+        \.\*
+        |
+        """ + _PRE_POST_DEV_RE_STR + r"""
+        (?:\+[a-z0-9]+(?:[-_\.][a-z0-9]+)*)?
+    )?
+    """,
+    re.X | re.I,
+)
+
+_COMPAT_VERSION_RE = re.compile(
+    r"""
+    v?
+    (?:[0-9]+!)?
+    [0-9]+(?:\.[0-9]+)+
+    """ + _PRE_POST_DEV_RE_STR,
+    re.X | re.I,
+)
+
+_CMP_VERSION_RE = re.compile(
+    r"""
+    v?
+    (?:[0-9]+!)?
+    [0-9]+(?:\.[0-9]+)*
+    """ + _PRE_POST_DEV_RE_STR,
+    re.X | re.I,
+)
+
+_DIGITS_AND_DOT = ".0123456789"
+_INVALID_ARBITRARY_CHARS = (" ", "\t", "\n", "\r", "\f", "\v", "\034", "\035", "\036", "\037", ";", ")")
+
+def _is_plain_release(version, min_segments = 1):
+    """Returns True if version is a valid dot-separated numeric release, False if invalid, or None if non-numeric."""
+    if not version or version.lstrip(_DIGITS_AND_DOT):
+        return None
+    parts = version.split(".")
+    return len(parts) >= min_segments and "" not in parts
 
 def parse_specifier(spec_str):
     """Parses a single specifier string.
@@ -96,16 +81,35 @@ def parse_specifier(spec_str):
     Returns:
         A struct representing the parsed specifier.
     """
-    if not _SPECIFIER_RE.fullmatch(spec_str):
-        _fail_invalid_specifier(spec_str)
-
-    spec_str = spec_str.strip()
-    if spec_str.startswith("==="):
-        operator, version = spec_str[:3], spec_str[3:].strip()
-    elif spec_str.startswith(("~=", "==", "!=", "<=", ">=")):
-        operator, version = spec_str[:2], spec_str[2:].strip()
+    stripped = spec_str.strip()
+    if stripped.startswith("==="):
+        operator, version = "===", stripped[3:].strip()
+        for c in _INVALID_ARBITRARY_CHARS:
+            if c in version:
+                _fail_invalid_specifier(spec_str)
+    elif stripped.startswith(("==", "!=")):
+        operator, version = stripped[:2], stripped[2:].strip()
+        plain = _is_plain_release(version)
+        if plain == False or (plain == None and not _EQ_VERSION_RE.fullmatch(version)):
+            _fail_invalid_specifier(spec_str)
+    elif stripped.startswith("~="):
+        operator, version = "~=", stripped[2:].strip()
+        plain = _is_plain_release(version, min_segments = 2)
+        if plain == False or (plain == None and not _COMPAT_VERSION_RE.fullmatch(version)):
+            _fail_invalid_specifier(spec_str)
+    elif stripped.startswith(("<=", ">=")):
+        operator, version = stripped[:2], stripped[2:].strip()
+        plain = _is_plain_release(version)
+        if plain == False or (plain == None and not _CMP_VERSION_RE.fullmatch(version)):
+            _fail_invalid_specifier(spec_str)
+    elif stripped.startswith(("<", ">")):
+        operator, version = stripped[:1], stripped[1:].strip()
+        plain = _is_plain_release(version)
+        if plain == False or (plain == None and not _CMP_VERSION_RE.fullmatch(version)):
+            _fail_invalid_specifier(spec_str)
     else:
-        operator, version = spec_str[:1], spec_str[1:].strip()
+        _fail_invalid_specifier(spec_str)
+        return None  # Unreachable
 
     return struct(
         operator = operator,
