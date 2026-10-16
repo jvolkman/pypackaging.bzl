@@ -10,7 +10,6 @@ ARCHIVE="pypackaging.bzl-$TAG.tar.gz"
 
 # NB: configuration for 'git archive' is in /.gitattributes
 git archive --format=tar --prefix=${PREFIX}/ ${TAG} | gzip > $ARCHIVE
-SHA=$(shasum -a 256 $ARCHIVE | awk '{print $1}')
 
 # Add generated API docs
 docs="$(mktemp -d)"; targets="$(mktemp)"
@@ -21,25 +20,20 @@ tar --create --auto-compress \
     --file "$GITHUB_WORKSPACE/${ARCHIVE%.tar.gz}.docs.tar.gz" .
 
 cat << EOF
-## Using Bzlmod with Bazel 6 or greater
+## Using Bzlmod
 
+Requires Bazel 7 or newer with Bzlmod (WORKSPACE is not supported).
 Add to your \`MODULE.bazel\` file:
 
 \`\`\`starlark
 bazel_dep(name = "pypackaging.bzl", version = "${TAG:1}")
 \`\`\`
 
-## Using WORKSPACE
-
-Paste this snippet into your \`WORKSPACE.bazel\` file:
+Then load the API from a \`.bzl\` file:
 
 \`\`\`starlark
-load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
-http_archive(
-    name = "pypackaging.bzl",
-    sha256 = "${SHA}",
-    strip_prefix = "${PREFIX}",
-    url = "https://github.com/jvolkman/pypackaging.bzl/releases/download/${TAG}/${ARCHIVE}",
-)
+load("@pypackaging.bzl", "pypackaging")
 \`\`\`
+
+and add \`@pypackaging.bzl//:pypackaging\` to the \`deps\` of your \`bzl_library\` targets.
 EOF

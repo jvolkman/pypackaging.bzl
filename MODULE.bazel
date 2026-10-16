@@ -2,6 +2,7 @@
 
 module(
     name = "pypackaging.bzl",
+    bazel_compatibility = [">=7.0.0"],
     compatibility_level = 1,
 )
 
