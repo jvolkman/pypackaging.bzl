@@ -281,7 +281,8 @@ def _spec_str(spec):
 def _spec_key(spec):
     if spec.operator == "===" or spec.version.endswith(".*"):
         return (spec.operator, spec.version)
-    return (spec.operator, utils.canonicalize_version(spec.version, strip_trailing_zero = spec.operator != "~="))
+    v = getattr(spec, "parsed_version", None) or spec.version
+    return (spec.operator, utils.canonicalize_version(v, strip_trailing_zero = spec.operator != "~="))
 
 def _requirement_to_string(req):
     """Serializes a parsed requirement like upstream `str(Requirement)`.
