@@ -34,7 +34,7 @@ tar --create --auto-compress \
 cat << EOF
 ## Using Bzlmod
 
-Requires Bazel 7 or newer with Bzlmod (WORKSPACE is not supported).
+Requires Bazel 7.1 or newer with Bzlmod (WORKSPACE is not supported).
 Add to your \`MODULE.bazel\` file:
 
 \`\`\`starlark

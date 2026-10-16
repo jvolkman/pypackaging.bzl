@@ -23,8 +23,9 @@ jobs:
       matrix:
         # "pinned" uses the version in .bazelversion (also pinned in docs/ and
         # e2e/smoke/). The other legs override it with USE_BAZEL_VERSION.
+        # 7.1.0 is the oldest supported version (bazel_compatibility).
         os: [ubuntu-latest]
-        bazel: [pinned, 7.x, 9.x]
+        bazel: [pinned, 7.1.0, 7.x, 9.x]
         include:
           # The library is pure Starlark, so the smoke test on the pinned
           # version is enough on macOS and Windows.
@@ -64,7 +65,7 @@ jobs:
         if: runner.os == 'Linux' && matrix.bazel == '9.x'
         run: bazel test $LOCKFILE_FLAGS //...
       - name: Run Tests
-        if: runner.os == 'Linux' && matrix.bazel == '7.x'
+        if: runner.os == 'Linux' && startsWith(matrix.bazel, '7.')
         # tools/preset.bazelrc uses flags that Bazel 7 doesn't know.
         run: bazel --ignore_all_rc_files test $LOCKFILE_FLAGS //...
       - name: Run Doc Tests

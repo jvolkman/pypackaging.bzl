@@ -12,7 +12,7 @@ loading and analysis phases without a Python interpreter.
 
 ## Requirements
 
-- Bazel 7 or newer
+- Bazel 7.1 or newer
 - Bzlmod (WORKSPACE is not supported)
 
 ## Installation
