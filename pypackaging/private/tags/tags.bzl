@@ -19,7 +19,18 @@ _ARCH_FALLBACKS = {
     "armv8l": ["armv8l", "armv7l"],
 }
 
+def _linux_fallbacks(archs):
+    return ["linux_" + a for a in archs]
+
 def _expand_platform(platform):
+    """Expands a single platform into its compatible platforms.
+
+    Returns:
+        A tuple `(platforms, linux_fallbacks)`. `linux_fallbacks` holds the
+        generic `linux_<arch>` platforms implied by a manylinux/musllinux
+        platform. They are returned separately because packaging gives them
+        the lowest priority, after every manylinux and musllinux platform.
+    """
     if platform.startswith("macosx_"):
         parts = platform.split("_")
         if len(parts) >= 4:
@@ -27,7 +38,7 @@ def _expand_platform(platform):
                 major = int(parts[1])
                 minor = int(parts[2])
                 arch = "_".join(parts[3:])
-                return mac_platforms((major, minor), arch)
+                return mac_platforms((major, minor), arch), []
     elif platform.startswith("manylinux_"):
         parts = platform.split("_")
         if len(parts) >= 4:
@@ -39,10 +50,8 @@ def _expand_platform(platform):
 
                 result = []
                 for a in archs:
-                    result.append("linux_" + a)
-                for a in archs:
                     result.extend(manylinux_platforms((major, minor), a))
-                return result
+                return result, _linux_fallbacks(archs)
     elif platform.startswith("manylinux"):
         parts = platform.split("_", 1)
         if len(parts) == 2:
@@ -58,10 +67,8 @@ def _expand_platform(platform):
             if version:
                 result = []
                 for a in archs:
-                    result.append("linux_" + a)
-                for a in archs:
                     result.extend(manylinux_platforms(version, a))
-                return result
+                return result, _linux_fallbacks(archs)
     elif platform.startswith("musllinux_"):
         parts = platform.split("_")
         if len(parts) >= 4:
@@ -73,17 +80,15 @@ def _expand_platform(platform):
 
                 result = []
                 for a in archs:
-                    result.append("linux_" + a)
-                for a in archs:
                     result.extend(musllinux_platforms((major, minor), a))
-                return result
+                return result, _linux_fallbacks(archs)
     elif platform.startswith("android_"):
         parts = platform.split("_")
         if len(parts) >= 3:
             if parts[1].isdigit():
                 api_level = int(parts[1])
                 abi = "_".join(parts[2:])
-                return android_platforms(api_level, abi)
+                return android_platforms(api_level, abi), []
     elif platform.startswith("ios_"):
         parts = platform.split("_")
         if len(parts) >= 4:
@@ -91,9 +96,9 @@ def _expand_platform(platform):
                 major = int(parts[1])
                 minor = int(parts[2])
                 multiarch = "_".join(parts[3:])
-                return ios_platforms(major, minor, multiarch)
+                return ios_platforms(major, minor, multiarch), []
 
-    return [platform]
+    return [platform], []
 
 def _expand_allowed_platforms(platforms):
     if not platforms:
@@ -101,15 +106,24 @@ def _expand_allowed_platforms(platforms):
 
     seen = {}
     result = []
+    deferred = []
 
     for p in platforms:
         if p in seen:
             continue
-        additions = _expand_platform(p)
+        additions, linux_fallbacks = _expand_platform(p)
         for add in additions:
             if add not in seen:
                 seen[add] = True
                 result.append(add)
+        deferred.extend(linux_fallbacks)
+
+    # Like packaging's `_linux_platforms()`, the generic `linux_<arch>`
+    # platforms come after all manylinux/musllinux platforms.
+    for add in deferred:
+        if add not in seen:
+            seen[add] = True
+            result.append(add)
 
     return result
 

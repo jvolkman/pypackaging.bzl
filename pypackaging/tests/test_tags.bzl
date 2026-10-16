@@ -146,7 +146,6 @@ def _test_freethreaded(name):
 def _test_expand_allowed_platforms_manylinux_impl(env, _target):
     platforms = tags_internal.expand_allowed_platforms(["manylinux_2_17_x86_64"])
     env.expect.that_collection(platforms).contains_exactly([
-        "linux_x86_64",
         "manylinux_2_17_x86_64",
         "manylinux2014_x86_64",
         "manylinux_2_16_x86_64",
@@ -163,7 +162,8 @@ def _test_expand_allowed_platforms_manylinux_impl(env, _target):
         "manylinux_2_6_x86_64",
         "manylinux_2_5_x86_64",
         "manylinux1_x86_64",
-    ])
+        "linux_x86_64",
+    ]).in_order()
 
 def _test_expand_allowed_platforms_manylinux(name):
     util.helper_target(native.filegroup, name = name + "_subject")
@@ -172,17 +172,88 @@ def _test_expand_allowed_platforms_manylinux(name):
 def _test_expand_allowed_platforms_armv8l_impl(env, _target):
     platforms = tags_internal.expand_allowed_platforms(["manylinux_2_17_armv8l"])
     env.expect.that_collection(platforms).contains_exactly([
-        "linux_armv8l",
-        "linux_armv7l",
         "manylinux_2_17_armv8l",
         "manylinux2014_armv8l",
         "manylinux_2_17_armv7l",
         "manylinux2014_armv7l",
-    ])
+        "linux_armv8l",
+        "linux_armv7l",
+    ]).in_order()
 
 def _test_expand_allowed_platforms_armv8l(name):
     util.helper_target(native.filegroup, name = name + "_subject")
     analysis_test(name = name, target = name + "_subject", impl = _test_expand_allowed_platforms_armv8l_impl)
+
+def _test_expand_allowed_platforms_musllinux_order_impl(env, _target):
+    platforms = tags_internal.expand_allowed_platforms(["musllinux_1_2_x86_64"])
+    env.expect.that_collection(platforms).contains_exactly([
+        "musllinux_1_2_x86_64",
+        "musllinux_1_1_x86_64",
+        "musllinux_1_0_x86_64",
+        "linux_x86_64",
+    ]).in_order()
+
+def _test_expand_allowed_platforms_musllinux_order(name):
+    util.helper_target(native.filegroup, name = name + "_subject")
+    analysis_test(name = name, target = name + "_subject", impl = _test_expand_allowed_platforms_musllinux_order_impl)
+
+def _test_expand_allowed_platforms_legacy_order_impl(env, _target):
+    platforms = tags_internal.expand_allowed_platforms(["manylinux2014_aarch64"])
+    env.expect.that_collection(platforms).contains_exactly([
+        "manylinux_2_17_aarch64",
+        "manylinux2014_aarch64",
+        "linux_aarch64",
+    ]).in_order()
+
+def _test_expand_allowed_platforms_legacy_order(name):
+    util.helper_target(native.filegroup, name = name + "_subject")
+    analysis_test(name = name, target = name + "_subject", impl = _test_expand_allowed_platforms_legacy_order_impl)
+
+def _test_expand_allowed_platforms_many_and_musl_order_impl(env, _target):
+    # Matches packaging's _linux_platforms(): manylinux, then musllinux, then linux.
+    platforms = tags_internal.expand_allowed_platforms(["manylinux_2_17_aarch64", "musllinux_1_1_aarch64"])
+    env.expect.that_collection(platforms).contains_exactly([
+        "manylinux_2_17_aarch64",
+        "manylinux2014_aarch64",
+        "musllinux_1_1_aarch64",
+        "musllinux_1_0_aarch64",
+        "linux_aarch64",
+    ]).in_order()
+
+    # An explicitly requested linux_<arch> keeps its position.
+    platforms = tags_internal.expand_allowed_platforms(["linux_aarch64", "manylinux_2_17_aarch64"])
+    env.expect.that_collection(platforms).contains_exactly([
+        "linux_aarch64",
+        "manylinux_2_17_aarch64",
+        "manylinux2014_aarch64",
+    ]).in_order()
+
+def _test_expand_allowed_platforms_many_and_musl_order(name):
+    util.helper_target(native.filegroup, name = name + "_subject")
+    analysis_test(name = name, target = name + "_subject", impl = _test_expand_allowed_platforms_many_and_musl_order_impl)
+
+def _test_get_supported_linux_priority_impl(env, _target):
+    tags = get_supported(version = "311", platforms = ["manylinux_2_28_x86_64"], impl = "cp", abis = ["cp311"])
+
+    # Same priority as packaging 26.2: the newest manylinux tag first and the
+    # generic linux tag after all manylinux tags for a given ABI.
+    env.expect.that_str(tags[0]).equals("cp311-cp311-manylinux_2_28_x86_64")
+    env.expect.that_int(tags.index("cp311-cp311-linux_x86_64")).equals(27)
+    env.expect.that_str(tags[26]).equals("cp311-cp311-manylinux1_x86_64")
+    env.expect.that_str(tags[28]).equals("cp311-abi3-manylinux_2_28_x86_64")
+
+    tags = get_supported(version = "312", platforms = ["musllinux_1_2_x86_64"], impl = "cp", abis = ["cp312"])
+    env.expect.that_collection(tags[:5]).contains_exactly([
+        "cp312-cp312-musllinux_1_2_x86_64",
+        "cp312-cp312-musllinux_1_1_x86_64",
+        "cp312-cp312-musllinux_1_0_x86_64",
+        "cp312-cp312-linux_x86_64",
+        "cp312-abi3-musllinux_1_2_x86_64",
+    ]).in_order()
+
+def _test_get_supported_linux_priority(name):
+    util.helper_target(native.filegroup, name = name + "_subject")
+    analysis_test(name = name, target = name + "_subject", impl = _test_get_supported_linux_priority_impl)
 
 def tags_test_suite(name):
     test_suite(
@@ -199,5 +270,9 @@ def tags_test_suite(name):
             _test_freethreaded,
             _test_expand_allowed_platforms_manylinux,
             _test_expand_allowed_platforms_armv8l,
+            _test_expand_allowed_platforms_musllinux_order,
+            _test_expand_allowed_platforms_legacy_order,
+            _test_expand_allowed_platforms_many_and_musl_order,
+            _test_get_supported_linux_priority,
         ],
     )
