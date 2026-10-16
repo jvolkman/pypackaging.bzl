@@ -20,7 +20,8 @@ Semantics follow `packaging.markers.Marker.evaluate` (packaging 26.2):
   `platform_release` are compared as PEP 440 versions when `op + value` is a
   valid specifier (pre-releases always match). If it is not a valid
   specifier, the comparison falls back to the string table below; if the
-  version being tested is not a valid version, the comparison is False. A
+  version being tested is not a valid version, the comparison is False,
+  except for `===`, which compares the strings case-insensitively. A
   `python_full_version` ending in "+" gets "local" appended first.
 - All other comparisons use upstream's string table: `==`, `!=`, `in` and
   `not in` as usual, `<` and `>` are always False, `<=` and `>=` mean
@@ -35,10 +36,10 @@ strings) when markers use them.
 
 Non-standard extension (uv-compatible): `environment["extra"]` may be a
 list or tuple of strings, the set of active extras (uv also uses this for
-its conflict tokens). Each element is normalized. `extra == X`,
-`X == extra` and `===` are True iff X is in the set; `!=` is True iff it is
-not. An empty list therefore makes `==` False and `!=` True. Any other
-operator with a list-valued `extra` fails.
+its conflict tokens). Each element is normalized. `extra == X` and
+`X == extra` are True iff X is in the set; `!=` is True iff it is not. An
+empty list therefore makes `==` False and `!=` True. Any other operator
+(including `===`, which fails for a string `extra` too) fails.
 
 
 **PARAMETERS**
@@ -73,8 +74,8 @@ variable names are mapped to their underscore form, `python_implementation`
 is an alias for `platform_python_implementation`, and the value compared
 against `extra` is normalized (PEP 685) at every nesting level.
 
-Unlike upstream, the empty string is accepted and returns `[]`, which
-`evaluate` treats as always true. Whitespace-only input is rejected.
+Unlike upstream, an empty or whitespace-only string is accepted and
+returns `[]`, which `evaluate` treats as always true.
 
 Invalid input fails with an upstream-style message that shows the marker
 and a caret at the error position.
@@ -112,9 +113,12 @@ Variables are emitted in their normalized form and string values are
 always double-quoted (without escaping, like upstream). Redundant
 parentheses around a whole group are dropped.
 
-Divergence: upstream also drops the parentheses of a doubly parenthesized
+Divergences: upstream also drops the parentheses of a doubly parenthesized
 nested group, e.g. `a and ((b or c))` becomes `a and b or c`, which changes
-the meaning. This implementation keeps them: `a and (b or c)`.
+the meaning. This implementation keeps them: `a and (b or c)`. And since
+`parse` normalizes the value compared with `extra` at every nesting level,
+`(extra == 'Foo_Bar')` is written as `(extra == "foo-bar")`, where upstream
+keeps `"Foo_Bar"`.
 
 
 **PARAMETERS**
@@ -148,7 +152,8 @@ the input and a caret at the error position.
 Differences from upstream's `Requirement` object:
 
 - `name` is normalized (`utils.canonicalize_name`), and `extras` is a
-  sorted, de-duplicated list of normalized extra names.
+  sorted, de-duplicated list of normalized extra names. The names as
+  written are in `raw_name` and `raw_extras`.
 - `specifier` is the result of `specifiers.parse_set` for name-based
   requirements (with no specifiers it has an empty `specs` list), but
   `None` for URL requirements.
@@ -168,8 +173,10 @@ Differences from upstream's `Requirement` object:
 
 A struct with fields:
     name: The normalized project name.
+    raw_name: The project name as written.
     url: The URL for `name @ url` requirements, else None.
     extras: Sorted list of unique, normalized extras.
+    raw_extras: Sorted list of unique extras as written.
     specifier: A specifier set struct, or None for URL requirements.
     marker: The parsed marker tree, or None.
     marker_str: The raw marker string, or None.
@@ -599,7 +606,7 @@ the first element of the result.
 | Name  | Description | Default Value |
 | :------------- | :------------- | :------------- |
 | <a id="pypackaging.tags.select_compatible-supported"></a>supported |  An ordered list of supported tags (most preferred first), or a map returned by `priority_map`. Pass a precomputed map when calling this repeatedly with the same supported tags.   |  none |
-| <a id="pypackaging.tags.select_compatible-tagged"></a>tagged |  A list of `(thing, tags)` tuples, where `tags` is a list of Tag structs (e.g. `parse_wheel_filename(f).tags`) or tag strings.   |  none |
+| <a id="pypackaging.tags.select_compatible-tagged"></a>tagged |  A list of `(thing, tags)` tuples, where `tags` is a list of Tag structs (e.g. `parse_wheel_filename(f).tags`) or tag strings. Compressed tag strings such as `py2.py3-none-any` are expanded with `parse_tag`.   |  none |
 
 **RETURNS**
 
@@ -702,6 +709,12 @@ pypackaging.utils.is_normalized_name(<a href="#pypackaging.utils.is_normalized_n
 
 Check if a name is already normalized.
 
+A normalized name is lowercase ASCII letters and digits separated by
+single `-`. packaging 26.2's regex also accepts `--` after a
+one-character first segment (`a--b`, `a--b-c`); this function doesn't,
+since `canonicalize_name` never produces it.
+
+
 **PARAMETERS**
 
 
@@ -796,14 +809,22 @@ load("@pypackaging.bzl", "pypackaging")
 pypackaging.version.get_public_key(<a href="#pypackaging.version.get_public_key-v">v</a>)
 </pre>
 
-Returns the comparison key for the public version (without local segment).
+Returns the sort key of a version without its local segment.
+
+This is the `key` of upstream's `Version.public`: `1.0+abc` and `1.0`
+have the same public key.
+
 
 **PARAMETERS**
 
 
 | Name  | Description | Default Value |
 | :------------- | :------------- | :------------- |
-| <a id="pypackaging.version.get_public_key-v"></a>v |  <p align="center"> - </p>   |  none |
+| <a id="pypackaging.version.get_public_key-v"></a>v |  A version struct returned by `parse`.   |  none |
+
+**RETURNS**
+
+A sort key, comparable with the `key` field of other versions.
 
 
 <a id="pypackaging.version.parse"></a>

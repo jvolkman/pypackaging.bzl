@@ -116,8 +116,20 @@ that, these are the intentional differences.
   instead.
 - `~=` derives its prefix from the normalized version, as PEP 440 says:
   `~=1.0c1` means `>=1.0c1, ==1.*`. packaging derives it from the raw string,
-  so it treats `~=1.0c1`, `~=1.0.r1` or `~=1.0.RC1` as `==1.0.*`, and `~=v1.0`
-  matches nothing.
+  splitting off only labels that start with lowercase `a`, `b`, `rc`, `dev`
+  or `post`. So the results differ, for example, for:
+
+  - a release directly followed by `c` (`~=1.0c1`);
+  - a `.`-separated label that isn't one of those (`~=1.0.r1`, `~=1.0.pre1`,
+    `~=1.0.RC1`, `~=1.0.0c1`), which packaging treats as another release
+    segment (`==1.0.*`, `==1.0.0.*`);
+  - a `v` or `V` prefix (`~=v1.0`), where packaging matches nothing.
+
+  Spellings such as `~=1.0RC1`, `~=1.0-c1` or `~=1.0.post1` behave the same.
+
+- packaging accepts some non-ASCII case-folding lookalikes in `~=` labels
+  (`~=1.0.poſt1`, with U+017F) and then fails when matching; they are
+  rejected here.
 - Specifiers and specifier sets are immutable structs, so there is no
   constructor-level `prereleases`; pass `prereleases` to `contains`,
   `set_contains`, `filter` or `set_filter` instead. There is no `key`
@@ -128,16 +140,17 @@ that, these are the intentional differences.
 
 ### Markers and requirements
 
-- `markers.parse("")` returns `[]`, which evaluates to True; packaging rejects
-  the empty string.
+- `markers.parse` returns `[]` for an empty or whitespace-only string, which
+  evaluates to True; packaging rejects both.
 - There is no default environment: every variable a marker uses must be in
   the environment dict, except `extra`, which defaults to `""` (None also
   means `""`).
-- `extra` may be a list or tuple of active extras, as uv does. `==`, `===`
-  and `!=` then test membership, and any other operator fails.
+- `extra` may be a list or tuple of active extras, as uv does. `==` and `!=`
+  then test membership, and any other operator fails.
 - The value compared with `extra` is normalized at every nesting level;
   packaging only normalizes top-level comparisons, so its
-  `(extra == 'Foo_Bar')` never matches.
+  `(extra == 'Foo_Bar')` never matches. This also shows in `to_string`
+  output: `(extra == "foo-bar")` where packaging keeps `"Foo_Bar"`.
 - `\N{...}` escapes in marker strings are not supported and fail.
 - A collection (`extras`, `dependency_groups`) on the left of a comparison
   fails with a clear error; packaging raises `AssertionError`.
@@ -167,6 +180,8 @@ that, these are the intentional differences.
 - `utils.canonicalize_name` lowercases ASCII letters only, and wheel project
   names may contain any non-ASCII character (packaging accepts only Unicode
   word characters).
+- `utils.is_normalized_name` rejects `--` after a one-character first segment
+  (`a--b`), which packaging's regex accepts.
 
 ## Upstream Sources
 
