@@ -210,6 +210,42 @@ def _test_parse_version_whitespace(name):
     util.helper_target(native.filegroup, name = name + "_subject")
     analysis_test(name = name, target = name + "_subject", impl = _test_parse_version_whitespace_impl)
 
+def _test_version_to_string_impl(env, _target):
+    # Expected values are str(packaging.version.Version(input)).
+    for s, expected in [
+        ("1.0.0-RC1", "1.0.0rc1"),
+        ("v1!2.0-post3", "1!2.0.post3"),
+        ("1.0a", "1.0a0"),
+        ("1.0-1", "1.0.post1"),
+        ("1.0.dev", "1.0.dev0"),
+        ("01.02", "1.2"),
+        ("1.0+Ubuntu-1", "1.0+ubuntu.1"),
+        ("1.0+001", "1.0+1"),
+        ("0!1.0", "1.0"),
+        ("1.0c1", "1.0rc1"),
+        ("1.0alpha2.r3", "1.0a2.post3"),
+        ("1.0.0.post0.dev0", "1.0.0.post0.dev0"),
+        ("1.0+abc.007x", "1.0+abc.007x"),
+        (" 2.0B1_dev ", "2.0b1.dev0"),
+    ]:
+        env.expect.that_str(version.to_string(version.parse(s))).equals(expected)
+
+def _test_version_to_string(name):
+    util.helper_target(native.filegroup, name = name + "_subject")
+    analysis_test(name = name, target = name + "_subject", impl = _test_version_to_string_impl)
+
+def _test_try_parse_impl(env, _target):
+    for s in ["foo", "", " ", "1.0 a1", "1.0+", "1!2!3"]:
+        env.expect.that_bool(version.try_parse(s) == None).equals(True)
+    v = version.try_parse(" 1.0rc1 ")
+    env.expect.that_bool(v == None).equals(False)
+    env.expect.that_bool(v.key == version.parse("1.0rc1").key).equals(True)
+    env.expect.that_str(v.version_str).equals("1.0rc1")
+
+def _test_try_parse(name):
+    util.helper_target(native.filegroup, name = name + "_subject")
+    analysis_test(name = name, target = name + "_subject", impl = _test_try_parse_impl)
+
 def _parse_version_subject_impl(ctx):
     version.parse(ctx.attr.version_str)
     return []
@@ -248,6 +284,8 @@ def version_test_suite(name):
             _test_parse_version_basic,
             _test_parse_version_parts,
             _test_parse_version_whitespace,
+            _test_version_to_string,
+            _test_try_parse,
             _test_version_cmp,
             _test_version_cmp_upstream,
         ],

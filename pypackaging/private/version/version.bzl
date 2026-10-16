@@ -331,7 +331,34 @@ def parse_stripped_version(version_str):
 
     return make_version(epoch, release, pre, post, dev, local, version_str)
 
+def version_to_string(v):
+    """Returns the normalized string form of a parsed version.
+
+    This is upstream's `str(Version)`, e.g. `1.0.0-RC1` becomes `1.0.0rc1` and
+    `v1!2.0-post3` becomes `1!2.0.post3`. Trailing zeros are kept.
+
+    Args:
+        v: A version struct returned by `parse`.
+
+    Returns:
+        The normalized version string.
+    """
+    s = ".".join([str(x) for x in v.release])
+    if v.epoch != 0:
+        s = "{}!{}".format(v.epoch, s)
+    if v.pre != None:
+        s += "{}{}".format(v.pre[0], v.pre[1])
+    if v.post != None:
+        s += ".post{}".format(v.post[1])
+    if v.dev != None:
+        s += ".dev{}".format(v.dev[1])
+    if v.local != None:
+        s += "+" + ".".join([str(x) for x in v.local])
+    return s
+
 version = struct(
     parse = parse_version,
+    try_parse = try_parse_version,
+    to_string = version_to_string,
     get_public_key = get_public_key,
 )
