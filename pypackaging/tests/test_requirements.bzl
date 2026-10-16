@@ -178,6 +178,10 @@ _INVALID_REQUIREMENTS = [
     "foo>=1.0 rc1",
     "foo~=1.0.*",
     "foo<=1..0",
+    "foo===abc,def",
+    "foo\r",
+    "foo>=1.0,\n<2",
+    "foo\n>=1.0",
     # A specifier and a URL.
     "foo>=1.0 @ https://x",
     "foo (>=1.0) @ https://x",
@@ -441,6 +445,30 @@ def _test_parse_requirement_specifier_tokens(name):
     util.helper_target(native.filegroup, name = name + "_subject")
     analysis_test(name = name, target = name + "_subject", impl = _test_parse_requirement_specifier_tokens_impl)
 
+def _test_parse_requirement_raw_names_impl(env, _target):
+    req = requirements.parse("Foo_Bar [B, a,b] >= 1")
+    env.expect.that_str(req.raw_name).equals("Foo_Bar")
+    env.expect.that_collection(req.raw_extras).contains_exactly(["B", "a", "b"]).in_order()
+    env.expect.that_collection(req.extras).contains_exactly(["a", "b"]).in_order()
+
+    # The bare-name fast path returns the same struct as the full parser.
+    for name in ["requests", "Zope.Interface", "a", "1", "foo-_bar"]:
+        fast = requirements.parse(name)
+        full = requirements.parse(name + " ")
+        env.expect.where(req = name).that_bool(fast == full).equals(True)
+        env.expect.where(req = name).that_str(fast.raw_name).equals(name)
+
+    # to_string uses the struct's fields, not the original text.
+    req = requirements.parse("foo[x]>=1")
+    fields = {k: getattr(req, k) for k in dir(req) if k not in ("to_json", "to_proto")}
+    fields["raw_name"] = "Bar"
+    renamed = struct(**fields)
+    env.expect.that_str(requirements.to_string(renamed)).equals("Bar[x]>=1")
+
+def _test_parse_requirement_raw_names(name):
+    util.helper_target(native.filegroup, name = name + "_subject")
+    analysis_test(name = name, target = name + "_subject", impl = _test_parse_requirement_raw_names_impl)
+
 def _test_parse_requirement_marker_str_impl(env, _target):
     env.expect.that_bool(requirements.parse("foo>=1").marker_str == None).equals(True)
     env.expect.that_bool(requirements.parse("foo @ https://x").marker_str == None).equals(True)
@@ -544,6 +572,7 @@ def requirements_test_suite(name):
             _test_parse_requirement_grammar,
             _test_parse_requirement_specifier_tokens,
             _test_parse_requirement_marker_str,
+            _test_parse_requirement_raw_names,
             _test_requirement_to_string,
             _test_parse_requirement_error_messages,
         ],

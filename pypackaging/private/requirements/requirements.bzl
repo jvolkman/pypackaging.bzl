@@ -8,26 +8,24 @@ Baseline: pypa/packaging 26.2
 load(
     "//pypackaging/private/markers:markers.bzl",
     "at_end",
+    "is_word_char",
     "markers",
     "parse_marker_expression",
     "skip_ws",
     "syntax_error",
 )
-load("//pypackaging/private/specifiers:specifiers.bzl", "match_specifier_token", "specifiers")
+load("//pypackaging/private/specifiers:specifiers.bzl", "match_specifier_token", "parse_specifier", "specifiers", "try_parse_specifier")
 load("//pypackaging/private/utils:utils.bzl", "utils")
+load("//pypackaging/private/version:version.bzl", "strip_whitespace")
 
 visibility(["//", "//pypackaging/..."])
 
 _IDENTIFIER_START = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 _IDENTIFIER_CHARS = _IDENTIFIER_START + "._-"
-_ASCII_WORD_CHARS = _IDENTIFIER_START + "_"
 
 # Upstream VERSION_LOCAL_LABEL_TRAIL is `\+[a-z0-9]+(?:[-_.][a-z0-9]+)*`
 # (case-sensitive); it matches iff "+" is followed by one of these.
 _LOCAL_LABEL_START = "abcdefghijklmnopqrstuvwxyz0123456789"
-
-def _is_word_char(c):
-    return c in _ASCII_WORD_CHARS or c >= "\200"
 
 def _match_identifier(src, pos):
     """Matches upstream IDENTIFIER (`\\b[a-zA-Z0-9][a-zA-Z0-9._-]*\\b`).
@@ -38,7 +36,7 @@ def _match_identifier(src, pos):
     n = len(src)
     if pos >= n or src[pos] not in _IDENTIFIER_START:
         return None
-    if pos > 0 and _is_word_char(src[pos - 1]):
+    if pos > 0 and is_word_char(src[pos - 1]):
         return None
     end = pos + 1
     for _ in range(n - end):
@@ -49,7 +47,7 @@ def _match_identifier(src, pos):
 
     # Backtrack until the match ends on a word boundary.
     for _ in range(end - pos):
-        if _is_word_char(src[end - 1]) and (end == n or not _is_word_char(src[end])):
+        if is_word_char(src[end - 1]) and (end == n or not is_word_char(src[end])):
             return end
         end -= 1
     return None
@@ -132,6 +130,8 @@ def _parse(req_str):
         url = src[pos:end]
         pos = end
         if not at_end(src, pos):
+            # Upstream expects WS here. The URL runs up to a space or tab, so
+            # this can't fail; it is kept as an assertion.
             if src[pos] not in " \t":
                 syntax_error(ctx, "Expected whitespace after URL", pos)
             pos = skip_ws(src, pos)
@@ -210,7 +210,8 @@ def _parse_requirement(req_str):
     Differences from upstream's `Requirement` object:
 
     - `name` is normalized (`utils.canonicalize_name`), and `extras` is a
-      sorted, de-duplicated list of normalized extra names.
+      sorted, de-duplicated list of normalized extra names. The names as
+      written are in `raw_name` and `raw_extras`.
     - `specifier` is the result of `specifiers.parse_set` for name-based
       requirements (with no specifiers it has an empty `specs` list), but
       `None` for URL requirements.
@@ -224,23 +225,56 @@ def _parse_requirement(req_str):
     Returns:
         A struct with fields:
           name: The normalized project name.
+          raw_name: The project name as written.
           url: The URL for `name @ url` requirements, else None.
           extras: Sorted list of unique, normalized extras.
+          raw_extras: Sorted list of unique extras as written.
           specifier: A specifier set struct, or None for URL requirements.
           marker: The parsed marker tree, or None.
           marker_str: The raw marker string, or None.
           req_str: The input string with surrounding whitespace stripped.
     """
+
+    # Fast path for a bare project name such as "requests".
+    if req_str and req_str[0] in _IDENTIFIER_START and req_str[-1] in _IDENTIFIER_START and not req_str.lstrip(_IDENTIFIER_CHARS):
+        return struct(
+            name = utils.canonicalize_name(req_str),
+            raw_name = req_str,
+            url = None,
+            extras = [],
+            raw_extras = [],
+            specifier = struct(specs = []),
+            marker = None,
+            marker_str = None,
+            req_str = req_str,
+        )
+
     parsed = _parse(req_str)
     return struct(
         name = utils.canonicalize_name(parsed.name),
+        raw_name = parsed.name,
         url = parsed.url,
         extras = sorted({utils.canonicalize_name(e): True for e in parsed.extras}.keys()),
-        specifier = None if parsed.url != None else specifiers.parse_set(",".join(parsed.specs)),
+        raw_extras = sorted({e: True for e in parsed.extras}.keys()),
+        specifier = None if parsed.url != None else _specifier_set(parsed.specs),
         marker = parsed.marker,
         marker_str = parsed.marker_str,
-        req_str = req_str.strip(" \t\n\r\013\014"),
+        req_str = strip_whitespace(req_str),
     )
+
+def _specifier_set(tokens):
+    """Builds a specifier set struct (see `specifiers.parse_set`) from tokens."""
+    specs = []
+    for token in tokens:
+        if "," in token:
+            # Only an `===` token can contain a comma. Like upstream, the
+            # joined string is split on commas, which fails here.
+            return specifiers.parse_set(",".join(tokens))
+        spec = try_parse_specifier(token)
+        if spec == None:
+            spec = parse_specifier(token)  # Fails with the usual message.
+        specs.append(spec)
+    return struct(specs = specs)
 
 def _spec_str(spec):
     return spec.operator + spec.version
@@ -263,12 +297,9 @@ def _requirement_to_string(req):
     Returns:
         The normalized requirement string.
     """
-    parsed = _parse(req.req_str)
-    parts = [parsed.name]
-
-    extras = sorted({e: True for e in parsed.extras}.keys())
-    if extras:
-        parts.append("[{}]".format(",".join(extras)))
+    parts = [req.raw_name]
+    if req.raw_extras:
+        parts.append("[{}]".format(",".join(req.raw_extras)))
 
     if req.specifier != None and req.specifier.specs:
         seen = {}
