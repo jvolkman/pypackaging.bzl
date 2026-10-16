@@ -144,6 +144,10 @@ def get_public_key(v):
         return v.key
     return _cmpkey(v.epoch, v.release, v.pre, v.post, v.dev, None)
 
+def version_key(epoch, release, pre, post, dev, local):
+    """Returns the comparison key for a version built from the given parts."""
+    return _cmpkey(epoch, release, pre, post, dev, local)
+
 def make_version(epoch, release, pre, post, dev, local, version_str = ""):
     """Creates a Version struct and calculates its key."""
     key = _cmpkey(epoch, release, pre, post, dev, local)

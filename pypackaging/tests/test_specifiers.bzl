@@ -520,6 +520,62 @@ def _test_parse_specifier_edge_cases(name):
     util.helper_target(native.filegroup, name = name + "_subject")
     analysis_test(name = name, target = name + "_subject", impl = _test_parse_specifier_edge_cases_impl)
 
+def _test_parsed_version_impl(env, _target):
+    spec = specifiers.parse(">=1.0rc1")
+    env.expect.that_collection(spec.parsed_version.release).contains_exactly([1, 0]).in_order()
+    env.expect.that_collection(spec.parsed_version.pre).contains_exactly(["rc", 1]).in_order()
+
+    spec = specifiers.parse("==1!2.3.*")
+    env.expect.that_str(spec.version).equals("1!2.3.*")
+    env.expect.that_int(spec.parsed_version.epoch).equals(1)
+    env.expect.that_collection(spec.parsed_version.release).contains_exactly([2, 3]).in_order()
+
+    env.expect.that_bool(specifiers.parse("===foo").parsed_version == None).equals(True)
+
+    # Structs that weren't created by parse() still work.
+    for spec_str, version, expected in [
+        (">=1.0rc1", "1.0", True),
+        ("==1.*", "1.5", True),
+        ("~=1.4.5", "1.5", False),
+        ("===Foo", "foo", True),
+    ]:
+        parsed = specifiers.parse(spec_str)
+        spec = struct(operator = parsed.operator, version = parsed.version)
+        env.expect.that_bool(specifiers.contains(spec, version)).equals(expected)
+        env.expect.that_bool(specifiers.set_contains(struct(specs = [spec]), version)).equals(expected)
+
+def _test_parsed_version(name):
+    util.helper_target(native.filegroup, name = name + "_subject")
+    analysis_test(name = name, target = name + "_subject", impl = _test_parsed_version_impl)
+
+def _test_exclusive_ordered_impl(env, _target):
+    for spec_str, version, expected in [
+        (">1.0a1", "1.0a1+local", False),
+        (">1.0a1", "1.0a2+local", True),
+        (">1.0", "1.0.post1", False),
+        (">1.0", "1.0.post1+local", False),
+        (">1.0", "1.0+local", False),
+        (">1.0", "1.0.1+local", True),
+        (">1.0.post1", "1.0.post2", True),
+        (">1.0.post1", "1.0.post1+local", False),
+        (">1.0a1", "1.0a1.post1", False),
+        (">1.0a1.post1", "1.0a1.post2", True),
+        ("<1.0", "1.0.dev0", False),
+        ("<1.0", "1.0a1+local", False),
+        ("<1.0", "0.9+local", True),
+        ("<1.0", "0.9.dev0", True),
+        ("<1.0.post1", "1.0.post1.dev0", False),
+        ("<1.0.post1", "1.0", True),
+        ("<1.0rc1", "1.0a1", True),
+        ("<1.0rc1", "1.0rc1.dev1", True),
+        ("<1!1.0", "1.0", True),
+    ]:
+        env.expect.that_bool(specifiers.contains(specifiers.parse(spec_str), version)).equals(expected)
+
+def _test_exclusive_ordered(name):
+    util.helper_target(native.filegroup, name = name + "_subject")
+    analysis_test(name = name, target = name + "_subject", impl = _test_exclusive_ordered_impl)
+
 def specifiers_test_suite(name):
     """Sets up the specifier tests.
 
@@ -537,6 +593,8 @@ def specifiers_test_suite(name):
             _test_compatible_release,
             _test_parse_set_empty_items,
             _test_parse_specifier_edge_cases,
+            _test_parsed_version,
+            _test_exclusive_ordered,
         ],
     )
 
