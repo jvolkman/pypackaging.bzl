@@ -109,7 +109,17 @@ _PRE_NORMALIZATION = {
 }
 
 def get_public_key(v):
-    """Returns the comparison key for the public version (without local segment)."""
+    """Returns the sort key of a version without its local segment.
+
+    This is the `key` of upstream's `Version.public`: `1.0+abc` and `1.0`
+    have the same public key.
+
+    Args:
+        v: A version struct returned by `parse`.
+
+    Returns:
+        A sort key, comparable with the `key` field of other versions.
+    """
     if v.local == None:
         return v.key
     return _cmpkey(v.epoch, v.release, v.pre, v.post, v.dev, None)

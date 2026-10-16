@@ -80,6 +80,8 @@ def _test_canonicalize_name(name):
 def _test_is_normalized_name_impl(env, _target):
     for name in ["foo", "foo-bar", "a", "1", "a1-b2", "requests"]:
         env.expect.where(name = name).that_bool(utils.is_normalized_name(name)).equals(True)
+
+    # "foo--bar" is accepted by packaging 26.2's regex (a documented divergence).
     for name in ["", "Django", "foo--bar", "-foo", "foo-", "foo_bar", "foo.bar", "ab-", "foo bar", "café"]:
         env.expect.where(name = name).that_bool(utils.is_normalized_name(name)).equals(False)
 

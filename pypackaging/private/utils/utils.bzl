@@ -72,6 +72,11 @@ def canonicalize_name(name, validate = False):
 def is_normalized_name(name):
     """Check if a name is already normalized.
 
+    A normalized name is lowercase ASCII letters and digits separated by
+    single `-`. packaging 26.2's regex also accepts `--` after a
+    one-character first segment (`a--b`, `a--b-c`); this function doesn't,
+    since `canonicalize_name` never produces it.
+
     Args:
         name: The name to check.
 
