@@ -116,8 +116,22 @@ def syntax_error(ctx, message, span_start, span_end = None):
     """
     if span_end == None:
         span_end = span_start
+
+    # Python counts code points; Bazel strings hold UTF-8 bytes.
+    span_start = _code_point_len(ctx.src[:span_start])
+    span_end = _code_point_len(ctx.src[:span_end])
     caret = " " * span_start + "~" * (span_end - span_start) + "^"
     fail("{}: {}\n    {}\n    {}".format(ctx.label, message, ctx.src, caret))
+
+def _code_point_len(s):
+    """Returns the number of code points in the UTF-8 string `s`."""
+    n = len(s)
+
+    # buildifier: disable=string-iteration
+    for c in s.elems():
+        if c >= "\200" and c < "\300":
+            n -= 1
+    return n
 
 # ---------------------------------------------------------------------------
 # Python string literal decoding (upstream uses `ast.literal_eval`)

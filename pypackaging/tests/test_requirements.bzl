@@ -497,6 +497,8 @@ _ERROR_MESSAGES = [
     ("foo; os_name == 'nt' or", "Expected a marker variable or quoted string\n    foo; os_name == 'nt' or\n                           ^"),
     ("foo; os_name == 'nt' xx", "Expected end of dependency specifier\n    foo; os_name == 'nt' xx\n                         ^"),
     ("_foo", "Expected package name at the start of dependency specifier\n    _foo\n    ^"),
+    # The caret position counts code points, not UTF-8 bytes.
+    ("foo; os_name == '\303\251\342\202\254' xx", "Expected end of dependency specifier\n    foo; os_name == '\303\251\342\202\254' xx\n" + " " * 25 + "^"),
 ]
 
 def _make_error_message_test_impl(message):
