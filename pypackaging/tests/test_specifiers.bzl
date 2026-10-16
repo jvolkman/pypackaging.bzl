@@ -365,6 +365,57 @@ def _test_contains_invalid_version(name):
     util.helper_target(native.filegroup, name = name + "_subject")
     analysis_test(name = name, target = name + "_subject", impl = _test_contains_invalid_version_impl)
 
+def _test_compatible_release_impl(env, _target):
+    # ~=X.Y.Z means >=X.Y.Z, ==X.Y.*, and ==X.Y.* zero-pads shorter candidates.
+    for version, spec_str in [
+        ("1", "~=1.0.0"),
+        ("1.0", "~=1.0.0.0"),
+        ("1.0.post1", "~=1.0.0.0"),
+        ("1.0+local", "~=1.0.0.0"),
+        ("v1.0", "~=1.0.0.0"),
+        ("1.00", "~=1.0.0.0"),
+        ("1.0.post0.dev0", "~=1.0.0.0"),
+        ("2", "~=2.0.0"),
+        ("1.0.1", "~=1.0.0"),
+    ]:
+        env.expect.that_bool(specifiers.contains(specifiers.parse(spec_str), version)).equals(True)
+        env.expect.that_bool(specifiers.set_contains(specifiers.parse_set(spec_str), version)).equals(True)
+    for version, spec_str in [
+        ("1.1", "~=1.0.0"),
+        ("0.9", "~=1.0.0"),
+        ("1.0.0.dev0", "~=1.0.0.0"),
+        ("1!1", "~=1.0.0"),
+    ]:
+        env.expect.that_bool(specifiers.contains(specifiers.parse(spec_str), version)).equals(False)
+        env.expect.that_bool(specifiers.set_contains(specifiers.parse_set(spec_str), version)).equals(False)
+
+    # Intentional divergence: the prefix comes from the normalized spec version,
+    # as PEP 440 says. packaging 26.2 derives it from the raw string, so it
+    # treats ~=1.0c1 as ==1.0.* and ~=v1.0 as matching nothing.
+    for version, spec_str in [
+        ("1.1", "~=1.0c1"),
+        ("1.5", "~=1.0.c1"),
+        ("1.5", "~=1.0.pre1"),
+        ("1.5", "~=1.0.preview1"),
+        ("1.1", "~=1.0.r1"),
+        ("1.1", "~=1.0.rev1"),
+        ("1.1", "~=1.0.RC1"),
+        ("1.1", "~=1.0.POST1"),
+        ("1.1", "~=1.0.DEV1"),
+        ("1.1", "~=1.0.A1"),
+        ("1.0.5", "~=1.0.0c1"),
+        ("1.1", "~=v1.0"),
+        ("1.1", "~=V1.0"),
+        ("2.2.5", "~=v2.2.0"),
+    ]:
+        env.expect.that_bool(specifiers.contains(specifiers.parse(spec_str), version)).equals(True)
+    env.expect.that_bool(specifiers.contains(specifiers.parse("~=1.0c1"), "2.0")).equals(False)
+    env.expect.that_bool(specifiers.contains(specifiers.parse("~=v1.0"), "2.0")).equals(False)
+
+def _test_compatible_release(name):
+    util.helper_target(native.filegroup, name = name + "_subject")
+    analysis_test(name = name, target = name + "_subject", impl = _test_compatible_release_impl)
+
 def specifiers_test_suite(name):
     test_suite(
         name = name,
@@ -374,5 +425,6 @@ def specifiers_test_suite(name):
             _test_specifier_set_contains,
             _test_specifier_contains_upstream,
             _test_contains_invalid_version,
+            _test_compatible_release,
         ],
     )

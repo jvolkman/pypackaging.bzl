@@ -209,9 +209,12 @@ def specifier_contains(spec, version_str):
 
         if v1.epoch != v2.epoch:
             return False
-        if len(v1.release) < len(prefix_release):
-            return False
-        return v1.release[:len(prefix_release)] == prefix_release
+
+        # Like ==X.Y.*, zero-pad a shorter candidate release: 1 matches ~=1.0.0.
+        v1_release = v1.release
+        if len(v1_release) < len(prefix_release):
+            v1_release = v1_release + (0,) * (len(prefix_release) - len(v1_release))
+        return v1_release[:len(prefix_release)] == prefix_release
 
     fail("Operator {} not implemented".format(spec.operator))
 
