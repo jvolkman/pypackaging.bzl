@@ -10,11 +10,13 @@ def ios_platforms(major, minor, multiarch):
     Args:
         major: The major version of iOS.
         minor: The minor version of iOS.
-        multiarch: The multiarch string.
+        multiarch: The multiarch string. Hyphens are replaced with underscores,
+            like packaging.
 
     Returns:
         A list of iOS platform strings.
     """
+    multiarch = multiarch.replace("-", "_")
     if major < 12:
         return []
 

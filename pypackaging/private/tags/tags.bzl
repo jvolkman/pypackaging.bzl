@@ -22,6 +22,22 @@ _ARCH_FALLBACKS = {
 def _linux_fallbacks(archs):
     return ["linux_" + a for a in archs]
 
+def _match_apple_platform(platform):
+    """Equivalent to pip's `re.match(r"(.+)_(\\d+)_(\\d+)_(.+)", platform)`.
+
+    Returns:
+        A `(name, major, minor, arch)` tuple, or None if there is no match.
+    """
+    parts = platform.split("_")
+
+    # The first group is greedy, so prefer the right-most split.
+    for i in range(len(parts) - 3, 0, -1):
+        name = "_".join(parts[:i])
+        rest = "_".join(parts[i + 2:])
+        if name and parts[i].isdigit() and parts[i + 1].isdigit() and rest:
+            return name, int(parts[i]), int(parts[i + 1]), rest
+    return None
+
 def _expand_platform(platform):
     """Expands a single platform into its compatible platforms.
 
@@ -31,14 +47,24 @@ def _expand_platform(platform):
         platform. They are returned separately because packaging gives them
         the lowest priority, after every manylinux and musllinux platform.
     """
-    if platform.startswith("macosx_"):
-        parts = platform.split("_")
-        if len(parts) >= 4:
-            if parts[1].isdigit() and parts[2].isdigit():
-                major = int(parts[1])
-                minor = int(parts[2])
-                arch = "_".join(parts[3:])
-                return mac_platforms((major, minor), arch), []
+    if platform.startswith("macosx"):
+        # Like pip, any "macosx*" prefix is accepted and kept, e.g.
+        # "macosxcustom_10_9_x86_64" -> "macosxcustom_10_8_x86_64", ...
+        m = _match_apple_platform(platform)
+        if m:
+            name, major, minor, arch = m
+            return [
+                "{}_{}".format(name, p[len("macosx_"):])
+                for p in mac_platforms((major, minor), arch)
+            ], []
+    elif platform.startswith("ios"):
+        m = _match_apple_platform(platform)
+        if m:
+            name, major, minor, multiarch = m
+            return [
+                "{}_{}".format(name, p[len("ios_"):])
+                for p in ios_platforms(major, minor, multiarch)
+            ], []
     elif platform.startswith("manylinux_"):
         parts = platform.split("_")
         if len(parts) >= 4:
@@ -83,20 +109,10 @@ def _expand_platform(platform):
                     result.extend(musllinux_platforms((major, minor), a))
                 return result, _linux_fallbacks(archs)
     elif platform.startswith("android_"):
-        parts = platform.split("_")
-        if len(parts) >= 3:
-            if parts[1].isdigit():
-                api_level = int(parts[1])
-                abi = "_".join(parts[2:])
-                return android_platforms(api_level, abi), []
-    elif platform.startswith("ios_"):
-        parts = platform.split("_")
-        if len(parts) >= 4:
-            if parts[1].isdigit() and parts[2].isdigit():
-                major = int(parts[1])
-                minor = int(parts[2])
-                multiarch = "_".join(parts[3:])
-                return ios_platforms(major, minor, multiarch), []
+        # Equivalent to pip's re.fullmatch(r"android_(\d+)_(.+)", platform).
+        parts = platform.split("_", 2)
+        if len(parts) == 3 and parts[1].isdigit() and parts[2]:
+            return android_platforms(int(parts[1]), parts[2]), []
 
     return [platform], []
 
@@ -128,7 +144,39 @@ def _expand_allowed_platforms(platforms):
     return result
 
 def get_supported(version = None, platforms = None, impl = None, abis = None):
-    """Return a list of supported tags.
+    """Return a list of supported tags, most preferred first.
+
+    A port of pip's `get_supported()` (`pip/_internal/utils/compatibility_tags.py`)
+    on top of packaging's `cpython_tags()`, `generic_tags()` and
+    `compatible_tags()`. Each requested platform is expanded into the
+    platforms it is compatible with, as pip does for `--platform`:
+
+    * `macosx*_X_Y_<arch>`: packaging's `mac_platforms((X, Y), arch)`. As in
+      pip, a custom prefix such as `macosxcustom_` is kept.
+    * `ios*_X_Y_<multiarch>`: packaging's `ios_platforms()`, likewise.
+    * `android_N_<abi>`: packaging's `android_platforms()`.
+
+    Differences from pip, all because this runs at analysis time without a
+    host interpreter:
+
+    * `manylinux_X_Y_<arch>`, legacy `manylinux1/2010/2014_<arch>` and
+      `musllinux_X_Y_<arch>` are fully expanded, as packaging does for the host
+      platform in `_linux_platforms()`: every older glibc/musl version, the
+      legacy aliases, an `armv8l` -> `armv7l` fallback, and finally
+      `linux_<arch>` (after all other expanded platforms). pip only maps
+      `manylinux2014` -> `manylinux2010`/`manylinux1` and `manylinux2010` ->
+      `manylinux1`. As in packaging, nothing older than glibc 2.17 is emitted
+      on architectures other than x86_64/i686, so `manylinux2010_aarch64`
+      expands to just `linux_aarch64`.
+    * `platforms=None` or `[]` means `["any"]`, and `abis=None` means no
+      interpreter-specific ABIs; pip uses the host's platforms and ABIs. If no
+      platform remains after expansion (e.g. `macosx_9_0_x86_64`), only the
+      platform-independent `*-none-any` tags are returned. `version` is
+      required and `impl` defaults to `"cp"`.
+    * Every `"abi3"` and `"none"` entry in `abis` is ignored for CPython;
+      packaging only removes the first occurrence of each.
+
+    Tags are lowercase, like packaging's `Tag`.
 
     Args:
         version: The Python version string (e.g., "311").

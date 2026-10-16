@@ -427,6 +427,53 @@ def _test_parse_tag_unsorted(name):
     util.helper_target(_parse_tag_subject, name = name + "_subject", tag = "py3.py2-none-any", validate_order = True)
     analysis_test(name = name, target = name + "_subject", expect_failure = True, impl = _test_parse_tag_unsorted_impl)
 
+def _test_expand_apple_custom_prefix_impl(env, _target):
+    # Like pip, a custom "macosx*" prefix is kept during expansion.
+    platforms = tags_internal.expand_allowed_platforms(["macosxcustom_10_9_x86_64"])
+    env.expect.that_collection(platforms[:6]).contains_exactly([
+        "macosxcustom_10_9_x86_64",
+        "macosxcustom_10_9_intel",
+        "macosxcustom_10_9_fat64",
+        "macosxcustom_10_9_fat32",
+        "macosxcustom_10_9_universal2",
+        "macosxcustom_10_9_universal",
+    ]).in_order()
+    env.expect.that_str(platforms[-1]).equals("macosxcustom_10_4_universal")
+
+    platforms = tags_internal.expand_allowed_platforms(["ioscustom_12_1_arm64_iphoneos"])
+    env.expect.that_collection(platforms).contains_exactly([
+        "ioscustom_12_1_arm64_iphoneos",
+        "ioscustom_12_0_arm64_iphoneos",
+    ]).in_order()
+
+    # Unparsable platforms are passed through.
+    env.expect.that_collection(tags_internal.expand_allowed_platforms(["macosx_x_y_arm64"])).contains_exactly(["macosx_x_y_arm64"])
+    env.expect.that_collection(tags_internal.expand_allowed_platforms(["android_21_"])).contains_exactly(["android_21_"])
+
+def _test_expand_apple_custom_prefix(name):
+    util.helper_target(native.filegroup, name = name + "_subject")
+    analysis_test(name = name, target = name + "_subject", impl = _test_expand_apple_custom_prefix_impl)
+
+def _test_expand_hyphen_normalization_impl(env, _target):
+    # Like packaging, hyphens in the Android ABI and iOS multiarch become underscores.
+    platforms = tags_internal.expand_allowed_platforms(["android_18_arm64-v8a"])
+    env.expect.that_collection(platforms).contains_exactly([
+        "android_18_arm64_v8a",
+        "android_17_arm64_v8a",
+        "android_16_arm64_v8a",
+    ]).in_order()
+
+    platforms = tags_internal.expand_allowed_platforms(["ios_13_1_arm64-iphoneos"])
+    env.expect.that_collection(platforms[:3]).contains_exactly([
+        "ios_13_1_arm64_iphoneos",
+        "ios_13_0_arm64_iphoneos",
+        "ios_12_9_arm64_iphoneos",
+    ]).in_order()
+
+def _test_expand_hyphen_normalization(name):
+    util.helper_target(native.filegroup, name = name + "_subject")
+    analysis_test(name = name, target = name + "_subject", impl = _test_expand_hyphen_normalization_impl)
+
 def tags_test_suite(name):
     test_suite(
         name = name,
@@ -454,5 +501,7 @@ def tags_test_suite(name):
             _test_parse_tag_empty_components,
             _test_parse_tag_wrong_parts,
             _test_parse_tag_unsorted,
+            _test_expand_apple_custom_prefix,
+            _test_expand_hyphen_normalization,
         ],
     )
