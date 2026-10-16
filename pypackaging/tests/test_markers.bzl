@@ -215,6 +215,9 @@ def _test_version_marker_fallback_impl(env, _target):
     env.expect.that_bool(_eval("platform_release === '6.8.0-1015-GCP'", platform_release = "6.8.0-1015-gcp")).equals(True)
     env.expect.that_bool(_eval("python_version === '3.12.0'")).equals(False)
     env.expect.that_bool(_eval("python_version === ' 3.12'")).equals(True)
+    env.expect.that_bool(_eval("python_version === 'v3.12'", python_version = "v3.12")).equals(True)
+    env.expect.that_bool(_eval("python_version === '3.12'", python_version = "v3.12")).equals(False)
+    env.expect.that_bool(_eval("python_version == '3.12'", python_version = "v3.12")).equals(True)
 
     # Unicode whitespace around versions is ignored, like Python's str.strip().
     env.expect.that_bool(_eval("python_version == '\302\2403.12'")).equals(True)
@@ -389,6 +392,8 @@ def _test_marker_to_string_impl(env, _target):
         ("extra == os_name", "extra == \"os-name\""),
         ("os_name not  in 'x'", "os_name not in \"x\""),
         ("'a' in extras", "\"a\" in extras"),
+        # Like upstream, quotes inside values aren't escaped.
+        ("os_name == 'a\"b'", "os_name == \"a\"b\""),
         # Divergence: upstream would print `a and b or c` here.
         ("os_name == 'a' and ((os_name == 'b' or os_name == 'c'))", "os_name == \"a\" and (os_name == \"b\" or os_name == \"c\")"),
     ]
@@ -403,6 +408,8 @@ def _test_marker_to_string(name):
 # Failure cases: (marker, environment overrides or None to only parse, expected
 # message fragments).
 _FAILURES = [
+    # The caret position counts code points, not UTF-8 bytes.
+    ("os_name == '\303\251' and", None, ["Invalid marker: Expected a marker variable or quoted string\n    os_name == '\303\251' and\n" + " " * 22 + "^"]),
     # Dangling boolean operators and other grammar holes.
     ("os_name == 'nt' or", None, ["Invalid marker: Expected a marker variable or quoted string", "    os_name == 'nt' or\n                      ^"]),
     ("os_name == 'nt' and", None, ["Expected a marker variable or quoted string"]),

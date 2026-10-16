@@ -11,7 +11,7 @@ def _test_parse_version_basic_impl(env, _target):
     v = version.parse("1.2.3")
     env.expect.that_str(v.version_str).equals("1.2.3")
     env.expect.that_int(v.epoch).equals(0)
-    env.expect.that_collection(v.release).contains_exactly([1, 2, 3])
+    env.expect.that_collection(v.release).contains_exactly([1, 2, 3]).in_order()
 
 def _test_parse_version_basic(name):
     util.helper_target(native.filegroup, name = name + "_subject")
@@ -21,10 +21,10 @@ def _test_parse_version_parts_impl(env, _target):
     v = version.parse("1.2.3a1.post2.dev3+local")
     env.expect.that_str(v.version_str).equals("1.2.3a1.post2.dev3+local")
     env.expect.that_int(v.epoch).equals(0)
-    env.expect.that_collection(v.release).contains_exactly([1, 2, 3])
-    env.expect.that_collection(v.pre).contains_exactly(["a", 1])
-    env.expect.that_collection(v.post).contains_exactly(["post", 2])
-    env.expect.that_collection(v.dev).contains_exactly(["dev", 3])
+    env.expect.that_collection(v.release).contains_exactly([1, 2, 3]).in_order()
+    env.expect.that_collection(v.pre).contains_exactly(["a", 1]).in_order()
+    env.expect.that_collection(v.post).contains_exactly(["post", 2]).in_order()
+    env.expect.that_collection(v.dev).contains_exactly(["dev", 3]).in_order()
     env.expect.that_collection(v.local).contains_exactly(["local"])
 
 def _test_parse_version_parts(name):
@@ -190,19 +190,19 @@ def _test_version_cmp(name):
 def _test_parse_version_whitespace_impl(env, _target):
     # packaging.version.Version ignores surrounding whitespace (Python's \s),
     # including Unicode whitespace.
-    for s, normalized_key_of in [
-        (" 1.0", "1.0"),
-        ("1.0\n", "1.0"),
-        ("\t0!01.2c-dev+x ", "1.2rc0.dev0+x"),
-        ("1.0\013\014\034\035\036\037", "1.0"),
-        ("\302\2401.0\302\240", "1.0"),
-        ("\302\205 1.0", "1.0"),
-        ("1.0\342\200\250", "1.0"),
-        ("\343\200\200 \342\200\2111.0rc1", "1.0rc1"),
+    for s, version_str, normalized_key_of in [
+        (" 1.0", "1.0", "1.0"),
+        ("1.0\n", "1.0", "1.0"),
+        ("\t0!01.2c-dev+x ", "0!01.2c-dev+x", "1.2rc0.dev0+x"),
+        ("1.0\013\014\034\035\036\037", "1.0", "1.0"),
+        ("\302\2401.0\302\240", "1.0", "1.0"),
+        ("\302\205 1.0", "1.0", "1.0"),
+        ("1.0\342\200\250", "1.0", "1.0"),
+        ("\343\200\200 \342\200\2111.0rc1", "1.0rc1", "1.0rc1"),
     ]:
         v = version.parse(s)
-        env.expect.that_bool(v.key == version.parse(normalized_key_of).key).equals(True)
-        env.expect.that_str(v.version_str).equals(v.version_str.strip())
+        env.expect.where(version = s).that_bool(v.key == version.parse(normalized_key_of).key).equals(True)
+        env.expect.where(version = s).that_str(v.version_str).equals(version_str)
 
     env.expect.that_str(version.parse("  1.2.3\n").version_str).equals("1.2.3")
 

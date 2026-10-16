@@ -119,93 +119,90 @@ _MARKERS = [
 
 _WHITESPACES = ["", " ", "\t"]
 
+# (input, expected message): the messages are packaging 26.2's, with our
+# "Invalid requirement: " prefix, except where noted in the generator.
 _INVALID_REQUIREMENTS = [
-    "",  # Empty string
-    "==0.0",  # Missing package name
-    "name[bar baz]",  # Missing comma in extras
-    "name[bar, baz,]",  # Trailing comma in extras
-    "name (>= 1.0",  # Unclosed parenthesis in specifier
-    "name[bar, baz >= 1.0",  # Unclosed bracket
-    "name[bar, baz",  # Unclosed bracket
-    "name @ https://example.com/; extra == 'example'",  # No space before URL marker (upstream rejects this)
-    "name; (extra == 'example'",  # Unclosed parenthesis in marker
-    "name @ ",  # Missing URL after @
+    ("", "Invalid requirement: Expected package name at the start of dependency specifier\n    \n    ^"),  # Empty string
+    ("==0.0", "Invalid requirement: Expected package name at the start of dependency specifier\n    ==0.0\n    ^"),  # Missing package name
+    ("name[bar baz]", "Invalid requirement: Expected comma between extra names\n    name[bar baz]\n             ^"),  # Missing comma in extras
+    ("name[bar, baz,]", "Invalid requirement: Expected extra name after comma\n    name[bar, baz,]\n                  ^"),  # Trailing comma in extras
+    ("name (>= 1.0", "Invalid requirement: Expected matching RIGHT_PARENTHESIS for LEFT_PARENTHESIS, after version specifier\n    name (>= 1.0\n         ~~~~~~~^"),  # Unclosed parenthesis in specifier
+    ("name[bar, baz >= 1.0", "Invalid requirement: Expected matching RIGHT_BRACKET for LEFT_BRACKET, after extras\n    name[bar, baz >= 1.0\n        ~~~~~~~~~~^"),  # Unclosed bracket
+    ("name[bar, baz", "Invalid requirement: Expected matching RIGHT_BRACKET for LEFT_BRACKET, after extras\n    name[bar, baz\n        ~~~~~~~~~^"),  # Unclosed bracket
+    ("name @ https://example.com/; extra == 'example'", "Invalid requirement: Expected semicolon (after URL and whitespace) or end\n    name @ https://example.com/; extra == 'example'\n           ~~~~~~~~~~~~~~~~~~~~~~^"),  # No space before URL marker (upstream rejects this)
+    ("name; (extra == 'example'", "Invalid requirement: Expected matching RIGHT_PARENTHESIS for LEFT_PARENTHESIS, after marker expression\n    name; (extra == 'example'\n          ~~~~~~~~~~~~~~~~~~~^"),  # Unclosed parenthesis in marker
+    ("name @ ", "Invalid requirement: Expected URL after @\n    name @ \n           ^"),  # Missing URL after @
     # Invalid names.
-    "-foo",
-    "foo-",
-    ".foo",
-    "_foo",
-    "foo bar",
-    "foo 1.0",
-    "foo,bar",
-    "foo/bar",
-    "foo$bar",
-    "foo!",
-    "\nfoo",
-    "foo\n\n",
-    "foo\303\251",
+    ("-foo", "Invalid requirement: Expected package name at the start of dependency specifier\n    -foo\n    ^"),
+    ("foo-", "Invalid requirement: Expected semicolon (after name with no version specifier) or end\n    foo-\n       ^"),
+    (".foo", "Invalid requirement: Expected package name at the start of dependency specifier\n    .foo\n    ^"),
+    ("_foo", "Invalid requirement: Expected package name at the start of dependency specifier\n    _foo\n    ^"),
+    ("foo bar", "Invalid requirement: Expected semicolon (after name with no version specifier) or end\n    foo bar\n        ^"),
+    ("foo 1.0", "Invalid requirement: Expected semicolon (after name with no version specifier) or end\n    foo 1.0\n        ^"),
+    ("foo,bar", "Invalid requirement: Expected semicolon (after name with no version specifier) or end\n    foo,bar\n       ^"),
+    ("foo/bar", "Invalid requirement: Expected semicolon (after name with no version specifier) or end\n    foo/bar\n       ^"),
+    ("foo$bar", "Invalid requirement: Expected semicolon (after name with no version specifier) or end\n    foo$bar\n       ^"),
+    ("foo!", "Invalid requirement: Expected semicolon (after name with no version specifier) or end\n    foo!\n       ^"),
+    ("\nfoo", "Invalid requirement: Expected package name at the start of dependency specifier\n    \nfoo\n    ^"),
+    ("foo\n\n", "Invalid requirement: Expected semicolon (after name with no version specifier) or end\n    foo\n\n\n       ^"),
+    ("foo\303\251", "Invalid requirement: Expected package name at the start of dependency specifier\n    foo\303\251\n    ^"),
     # Invalid extras.
-    "foo[bar]]",
-    "foo[[bar]]",
-    "foo[-bar]",
-    "foo[_bar]",
-    "foo[bar-]",
-    "foo[,bar]",
-    "foo]",
+    ("foo[bar]]", "Invalid requirement: Expected semicolon (after name with no version specifier) or end\n    foo[bar]]\n            ^"),
+    ("foo[[bar]]", "Invalid requirement: Expected matching RIGHT_BRACKET for LEFT_BRACKET, after extras\n    foo[[bar]]\n       ~^"),
+    ("foo[-bar]", "Invalid requirement: Expected matching RIGHT_BRACKET for LEFT_BRACKET, after extras\n    foo[-bar]\n       ~^"),
+    ("foo[_bar]", "Invalid requirement: Expected matching RIGHT_BRACKET for LEFT_BRACKET, after extras\n    foo[_bar]\n       ~^"),
+    ("foo[bar-]", "Invalid requirement: Expected matching RIGHT_BRACKET for LEFT_BRACKET, after extras\n    foo[bar-]\n       ~~~~^"),
+    ("foo[,bar]", "Invalid requirement: Expected matching RIGHT_BRACKET for LEFT_BRACKET, after extras\n    foo[,bar]\n       ~^"),
+    ("foo]", "Invalid requirement: Expected semicolon (after name with no version specifier) or end\n    foo]\n       ^"),
     # Invalid specifiers.
-    "foo==1.0,,<2",
-    "foo,>=1",
-    "foo ,",
-    "foo>=1.0 <2",
-    "foo>1.0<2",
-    "foo>=1.0.*",
-    "foo>=1.0+abc",
-    "foo~=1",
-    "foo==",
-    "foo =1.0",
-    "foo ==1.0)",
-    "foo (==1.0))",
-    "foo===a)b",
-    "foo==1.0 bar",
+    ("foo==1.0,,<2", "Invalid requirement: Expected comma (within version specifier), semicolon (after version specifier) or end\n    foo==1.0,,<2\n       ~~~~~~^"),
+    ("foo,>=1", "Invalid requirement: Expected semicolon (after name with no version specifier) or end\n    foo,>=1\n       ^"),
+    ("foo ,", "Invalid requirement: Expected semicolon (after name with no version specifier) or end\n    foo ,\n        ^"),
+    ("foo>=1.0 <2", "Invalid requirement: Expected comma (within version specifier), semicolon (after version specifier) or end\n    foo>=1.0 <2\n       ~~~~~~^"),
+    ("foo>1.0<2", "Invalid requirement: Expected comma (within version specifier), semicolon (after version specifier) or end\n    foo>1.0<2\n       ~~~~^"),
+    ("foo>=1.0.*", "Invalid requirement: .* suffix can only be used with `==` or `!=` operators\n    foo>=1.0.*\n       ~~~~~~^"),
+    ("foo>=1.0+abc", "Invalid requirement: Local version label can only be used with `==` or `!=` operators\n    foo>=1.0+abc\n       ~~~~~^"),
+    ("foo~=1", "Invalid requirement: Expected semicolon (after name with no version specifier) or end\n    foo~=1\n       ^"),
+    ("foo==", "Invalid requirement: Expected semicolon (after name with no version specifier) or end\n    foo==\n       ^"),
+    ("foo =1.0", "Invalid requirement: Expected semicolon (after name with no version specifier) or end\n    foo =1.0\n        ^"),
+    ("foo ==1.0)", "Invalid requirement: Expected comma (within version specifier), semicolon (after version specifier) or end\n    foo ==1.0)\n        ~~~~~^"),
+    ("foo (==1.0))", "Invalid requirement: Expected comma (within version specifier), semicolon (after version specifier) or end\n    foo (==1.0))\n        ~~~~~~~^"),
+    ("foo===a)b", "Invalid requirement: Expected comma (within version specifier), semicolon (after version specifier) or end\n    foo===a)b\n       ~~~~^"),
+    ("foo==1.0 bar", "Invalid requirement: Expected comma (within version specifier), semicolon (after version specifier) or end\n    foo==1.0 bar\n       ~~~~~~^"),
     # Specifier tokens end where packaging's specifier regex stops matching.
-    "foo>=1!",
-    "foo==1.0a.*",
-    "foo<=1.0-",
-    "foo==1.0+abc.",
-    "foo>1.0+ABC",
-    "foo==1.*.0",
-    "foo>=1.0rc1+",
-    "foo>=1.0 rc1",
-    "foo~=1.0.*",
-    "foo<=1..0",
-    "foo===abc,def",
-    "foo\r",
-    "foo>=1.0,\n<2",
-    "foo\n>=1.0",
+    ("foo>=1!", "Invalid requirement: Expected comma (within version specifier), semicolon (after version specifier) or end\n    foo>=1!\n       ~~~^"),
+    ("foo==1.0a.*", "Invalid requirement: Expected comma (within version specifier), semicolon (after version specifier) or end\n    foo==1.0a.*\n       ~~~~~~~^"),
+    ("foo<=1.0-", "Invalid requirement: Expected comma (within version specifier), semicolon (after version specifier) or end\n    foo<=1.0-\n       ~~~~~^"),
+    ("foo==1.0+abc.", "Invalid requirement: Expected comma (within version specifier), semicolon (after version specifier) or end\n    foo==1.0+abc.\n       ~~~~~~~~~^"),
+    ("foo>1.0+ABC", "Invalid requirement: Expected comma (within version specifier), semicolon (after version specifier) or end\n    foo>1.0+ABC\n       ~~~~^"),
+    ("foo==1.*.0", "Invalid requirement: Expected comma (within version specifier), semicolon (after version specifier) or end\n    foo==1.*.0\n       ~~~~~^"),
+    ("foo>=1.0rc1+", "Invalid requirement: Expected comma (within version specifier), semicolon (after version specifier) or end\n    foo>=1.0rc1+\n       ~~~~~~~~^"),
+    ("foo>=1.0 rc1", "Invalid requirement: Expected comma (within version specifier), semicolon (after version specifier) or end\n    foo>=1.0 rc1\n       ~~~~~~^"),
+    ("foo~=1.0.*", "Invalid requirement: .* suffix can only be used with `==` or `!=` operators\n    foo~=1.0.*\n       ~~~~~~^"),
+    ("foo<=1..0", "Invalid requirement: Expected comma (within version specifier), semicolon (after version specifier) or end\n    foo<=1..0\n       ~~~^"),
+    ("foo===abc,def", "Invalid specifier: def"),
+    ("foo\r", "Invalid requirement: Expected semicolon (after name with no version specifier) or end\n    foo\r\n       ^"),
+    ("foo>=1.0,\n<2", "Invalid requirement: Expected comma (within version specifier), semicolon (after version specifier) or end\n    foo>=1.0,\n<2\n       ~~~~~~^"),
+    ("foo\n>=1.0", "Invalid requirement: Expected semicolon (after name with no version specifier) or end\n    foo\n>=1.0\n       ^"),
     # A specifier and a URL.
-    "foo>=1.0 @ https://x",
-    "foo (>=1.0) @ https://x",
-    "foo @ https://x @ y",
+    ("foo>=1.0 @ https://x", "Invalid requirement: Expected comma (within version specifier), semicolon (after version specifier) or end\n    foo>=1.0 @ https://x\n       ~~~~~~^"),
+    ("foo (>=1.0) @ https://x", "Invalid requirement: Expected comma (within version specifier), semicolon (after version specifier) or end\n    foo (>=1.0) @ https://x\n        ~~~~~~~~^"),
+    ("foo @ https://x @ y", "Invalid requirement: Expected semicolon (after URL and whitespace) or end\n    foo @ https://x @ y\n          ~~~~~~~~~~^"),
     # Empty or invalid markers.
-    "foo;",
-    "foo ;",
-    "foo; ",
-    "foo[a]; ",
-    "foo>=1.0;",
-    "foo>=1.0 ; ",
-    "foo @ https://x ;",
-    "foo;\n os_name=='nt'",
-    "foo; os_name == 'nt' or",
-    "foo>=1.0; os_name=='nt' and",
-    "foo; os_name == 'nt'; x",
-    "foo; os_name == '\\'",
-    "foo; bogus == 'x'",
+    ("foo;", "Invalid requirement: Expected a marker variable or quoted string\n    foo;\n        ^"),
+    ("foo ;", "Invalid requirement: Expected a marker variable or quoted string\n    foo ;\n         ^"),
+    ("foo; ", "Invalid requirement: Expected a marker variable or quoted string\n    foo; \n         ^"),
+    ("foo[a]; ", "Invalid requirement: Expected a marker variable or quoted string\n    foo[a]; \n            ^"),
+    ("foo>=1.0;", "Invalid requirement: Expected a marker variable or quoted string\n    foo>=1.0;\n             ^"),
+    ("foo>=1.0 ; ", "Invalid requirement: Expected a marker variable or quoted string\n    foo>=1.0 ; \n               ^"),
+    ("foo @ https://x ;", "Invalid requirement: Expected a marker variable or quoted string\n    foo @ https://x ;\n                     ^"),
+    ("foo;\n os_name=='nt'", "Invalid requirement: Expected a marker variable or quoted string\n    foo;\n os_name=='nt'\n        ^"),
+    ("foo; os_name == 'nt' or", "Invalid requirement: Expected a marker variable or quoted string\n    foo; os_name == 'nt' or\n                           ^"),
+    ("foo>=1.0; os_name=='nt' and", "Invalid requirement: Expected a marker variable or quoted string\n    foo>=1.0; os_name=='nt' and\n                               ^"),
+    ("foo; os_name == 'nt'; x", "Invalid requirement: Expected end of dependency specifier\n    foo; os_name == 'nt'; x\n                        ^"),
+    ("foo; os_name == '\\'", "Invalid string literal (the closing quote is escaped)"),
+    ("foo; bogus == 'x'", "Invalid requirement: Expected a marker variable or quoted string\n    foo; bogus == 'x'\n         ^"),
 ]
-
-def _generic_invalid_test_impl(env, target):
-    # We expect failure, so failures() should not be empty.
-    # Most failures are a single message.
-    env.expect.that_target(target).failures().has_size(1)
 
 def _test_parse_requirement_basic_impl(env, _target):
     req = requirements.parse("packaging")
@@ -222,7 +219,7 @@ def _test_parse_requirement_basic(name):
 def _test_parse_requirement_with_extras_impl(env, _target):
     req = requirements.parse("requests[security,tests]")
     env.expect.that_str(req.name).equals("requests")
-    env.expect.that_collection(req.extras).contains_exactly(["security", "tests"])
+    env.expect.that_collection(req.extras).contains_exactly(["security", "tests"]).in_order()
 
 def _test_parse_requirement_with_extras(name):
     util.helper_target(native.filegroup, name = name + "_subject")
@@ -525,6 +522,7 @@ _ERROR_MESSAGES = [
     ("foo; os_name == 'nt' or", "Expected a marker variable or quoted string\n    foo; os_name == 'nt' or\n                           ^"),
     ("foo; os_name == 'nt' xx", "Expected end of dependency specifier\n    foo; os_name == 'nt' xx\n                         ^"),
     ("_foo", "Expected package name at the start of dependency specifier\n    _foo\n    ^"),
+    ("foo; os_name == '\303\251' and", "Invalid requirement: Expected a marker variable or quoted string\n    foo; os_name == '\303\251' and\n" + " " * 27 + "^"),
     # The caret position counts code points, not UTF-8 bytes.
     ("foo; os_name == '\303\251\342\202\254' xx", "Expected end of dependency specifier\n    foo; os_name == '\303\251\342\202\254' xx\n" + " " * 25 + "^"),
 ]
@@ -581,10 +579,10 @@ def requirements_test_suite(name):
     invalid_test_names = []
 
     # buildifier: disable=enumerate
-    for i, req in enumerate(_INVALID_REQUIREMENTS):
+    for i, (req, message) in enumerate(_INVALID_REQUIREMENTS):
         test_name = name + "_invalid_{}".format(i)
         util.helper_target(_invalid_requirement_subject_rule, name = test_name + "_subject", req_str = req)
-        analysis_test(name = test_name, target = test_name + "_subject", expect_failure = True, impl = _generic_invalid_test_impl)
+        analysis_test(name = test_name, target = test_name + "_subject", expect_failure = True, impl = _make_error_message_test_impl(message))
         invalid_test_names.append(test_name)
 
     native.test_suite(
