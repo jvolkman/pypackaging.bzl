@@ -7,6 +7,9 @@ load("@rules_testing//lib:util.bzl", "util")
 load("//pypackaging/private/tags:cpython.bzl", "cpython_tags")
 
 # buildifier: disable=bzl-visibility
+load("//pypackaging/private/tags:manylinux.bzl", "manylinux_platforms")
+
+# buildifier: disable=bzl-visibility
 load("//pypackaging/private/tags:tags.bzl", "get_supported", "tags_internal")
 
 def _test_get_supported_basic_impl(env, _target):
@@ -313,6 +316,36 @@ def _test_get_supported_lowercase(name):
     util.helper_target(native.filegroup, name = name + "_subject")
     analysis_test(name = name, target = name + "_subject", impl = _test_get_supported_lowercase_impl)
 
+def _test_manylinux_glibc_major_3_impl(env, _target):
+    platforms = manylinux_platforms((3, 1), "x86_64")
+    expected = ["manylinux_3_1_x86_64", "manylinux_3_0_x86_64"]
+    for minor in range(50, 4, -1):
+        expected.append("manylinux_2_{}_x86_64".format(minor))
+        if minor == 17:
+            expected.append("manylinux2014_x86_64")
+        elif minor == 12:
+            expected.append("manylinux2010_x86_64")
+        elif minor == 5:
+            expected.append("manylinux1_x86_64")
+    env.expect.that_collection(platforms).contains_exactly(expected).in_order()
+
+    platforms = manylinux_platforms((4, 0), "aarch64")
+    env.expect.that_str(platforms[0]).equals("manylinux_4_0_aarch64")
+    env.expect.that_str(platforms[1]).equals("manylinux_3_50_aarch64")
+    env.expect.that_str(platforms[51]).equals("manylinux_3_0_aarch64")
+    env.expect.that_str(platforms[52]).equals("manylinux_2_50_aarch64")
+    env.expect.that_str(platforms[-1]).equals("manylinux2014_aarch64")
+    env.expect.that_int(len(platforms)).equals(1 + 51 + 34 + 1)
+
+    tags = get_supported(version = "311", platforms = ["manylinux_3_0_x86_64"], impl = "cp", abis = ["cp311"])
+    env.expect.that_str(tags[0]).equals("cp311-cp311-manylinux_3_0_x86_64")
+    env.expect.that_str(tags[1]).equals("cp311-cp311-manylinux_2_50_x86_64")
+    env.expect.that_int(tags.index("cp311-cp311-linux_x86_64")).equals(50)
+
+def _test_manylinux_glibc_major_3(name):
+    util.helper_target(native.filegroup, name = name + "_subject")
+    analysis_test(name = name, target = name + "_subject", impl = _test_manylinux_glibc_major_3_impl)
+
 def tags_test_suite(name):
     test_suite(
         name = name,
@@ -334,5 +367,6 @@ def tags_test_suite(name):
             _test_get_supported_linux_priority,
             _test_freethreaded_filtered_abis,
             _test_get_supported_lowercase,
+            _test_manylinux_glibc_major_3,
         ],
     )
