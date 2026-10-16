@@ -4,6 +4,8 @@ Derived from pypa/packaging: packaging/tags.py (Apache 2.0 / BSD).
 See README.md for details.
 """
 
+visibility(["//", "//pypackaging/..."])
+
 def ios_platforms(major, minor, multiarch):
     """Generates iOS platforms.
 

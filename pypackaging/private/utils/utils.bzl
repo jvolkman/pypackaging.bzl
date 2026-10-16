@@ -6,6 +6,8 @@ Derived from pypa/packaging: packaging/utils.py (Apache 2.0 / BSD).
 load("//pypackaging/private/tags:tags.bzl", "tags")
 load("//pypackaging/private/version:version.bzl", "try_parse_version", "version_to_string")
 
+visibility(["//", "//pypackaging/..."])
+
 _LOWER = "abcdefghijklmnopqrstuvwxyz"
 _UPPER = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 _DIGITS = "0123456789"

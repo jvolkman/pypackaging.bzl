@@ -4,6 +4,8 @@ Derived from pypa/packaging: packaging/_manylinux.py (Apache 2.0 / BSD).
 See README.md for details.
 """
 
+visibility(["//", "//pypackaging/..."])
+
 # Highest glibc minor version assumed for every glibc major version older
 # than the requested one (packaging's _LAST_GLIBC_MINOR default).
 _LAST_GLIBC_MINOR = 50

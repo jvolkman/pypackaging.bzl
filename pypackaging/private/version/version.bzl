@@ -15,6 +15,8 @@ Differences from `packaging.version.Version`:
   `try_parse` to get None instead.
 """
 
+visibility(["//", "//pypackaging/..."])
+
 def _fail_invalid_version(version):
     fail("Invalid version: {}".format(version))
 

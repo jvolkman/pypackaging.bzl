@@ -4,6 +4,8 @@ Derived from pypa/packaging: packaging/tags.py (Apache 2.0 / BSD).
 See README.md for details.
 """
 
+visibility(["//", "//pypackaging/..."])
+
 _DIGITS = "0123456789"
 
 def _is_threaded_cpython(abis):

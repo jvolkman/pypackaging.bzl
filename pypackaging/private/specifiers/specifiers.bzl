@@ -36,6 +36,8 @@ load(
     "whitespace_len_at",
 )
 
+visibility(["//", "//pypackaging/..."])
+
 def _fail_invalid_specifier(spec):
     fail("Invalid specifier: {}".format(spec))
 

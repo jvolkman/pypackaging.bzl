@@ -4,6 +4,8 @@ Derived from pypa/pip: pip/_internal/utils/compatibility_tags.py (MIT).
 See README.md for details.
 """
 
+visibility(["//", "//pypackaging/..."])
+
 def get_python_version(version_str):
     """Converts a version string such as "311" or "3" into a version tuple.
 

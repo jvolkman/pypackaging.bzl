@@ -8,6 +8,8 @@ Baseline: pypa/packaging 26.2
 load("//pypackaging/private/specifiers:specifiers.bzl", "specifier_contains", "try_parse_specifier")
 load("//pypackaging/private/utils:utils.bzl", "utils")
 
+visibility(["//", "//pypackaging/..."])
+
 # ---------------------------------------------------------------------------
 # Tokenizer primitives (shared with requirements.bzl)
 # ---------------------------------------------------------------------------

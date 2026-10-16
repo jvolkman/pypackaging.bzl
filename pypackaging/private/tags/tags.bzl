@@ -15,6 +15,8 @@ load("//pypackaging/private/tags:manylinux.bzl", "manylinux_platforms")
 load("//pypackaging/private/tags:musllinux.bzl", "musllinux_platforms")
 load("//pypackaging/private/tags:utils.bzl", "get_python_version")
 
+visibility(["//", "//pypackaging/..."])
+
 _ARCH_FALLBACKS = {
     "armv8l": ["armv8l", "armv7l"],
 }

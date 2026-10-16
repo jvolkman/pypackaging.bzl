@@ -4,6 +4,8 @@ Derived from pypa/packaging: packaging/tags.py (Apache 2.0 / BSD).
 See README.md for details.
 """
 
+visibility(["//", "//pypackaging/..."])
+
 def generic_tags(interpreter, abis, platforms):
     """Generates generic tags.
 

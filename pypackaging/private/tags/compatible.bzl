@@ -4,6 +4,8 @@ Derived from pypa/packaging: packaging/tags.py (Apache 2.0 / BSD).
 See README.md for details.
 """
 
+visibility(["//", "//pypackaging/..."])
+
 def _py_interpreter_range(python_version):
     versions = []
     if len(python_version) > 1:

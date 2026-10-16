@@ -16,6 +16,8 @@ load(
 load("//pypackaging/private/specifiers:specifiers.bzl", "match_specifier_token", "specifiers")
 load("//pypackaging/private/utils:utils.bzl", "utils")
 
+visibility(["//", "//pypackaging/..."])
+
 _IDENTIFIER_START = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 _IDENTIFIER_CHARS = _IDENTIFIER_START + "._-"
 _ASCII_WORD_CHARS = _IDENTIFIER_START + "_"
