@@ -7,6 +7,9 @@ load("@rules_testing//lib:util.bzl", "util")
 # buildifier: disable=bzl-visibility
 load("//pypackaging/private/specifiers:specifiers.bzl", "specifiers")
 
+# buildifier: disable=bzl-visibility
+load("//pypackaging/private/version:version.bzl", version_mod = "version")
+
 def _test_specifier_basic_impl(env, _target):
     spec = specifiers.parse(">=1.0")
     env.expect.that_str(spec.operator).equals(">=")
@@ -576,6 +579,107 @@ def _test_exclusive_ordered(name):
     util.helper_target(native.filegroup, name = name + "_subject")
     analysis_test(name = name, target = name + "_subject", impl = _test_exclusive_ordered_impl)
 
+# Expected values below come from packaging 26.2.
+_PRE_OPTS = [None, True, False]
+
+def _test_prereleases_contains_impl(env, _target):
+    for spec_str, version, expected in [
+        (">=1.2.3", "1.3.0a1", [True, True, False]),
+        ("!=1.0", "1.1a1", [True, True, False]),
+        ("===1.0a1", "1.0a1", [True, True, False]),
+        ("===foo", "foo", [True, True, True]),
+        ("==1.*", "1.5a1", [True, True, False]),
+        (">=1.2.3", "1.3.0", [True, True, True]),
+        (">=1.2.3", "1.0a1", [False, False, False]),
+    ]:
+        spec = specifiers.parse(spec_str)
+        for p, e in zip(_PRE_OPTS, expected):
+            env.expect.that_bool(specifiers.contains(spec, version, prereleases = p)).equals(e)
+            env.expect.that_bool(specifiers.contains(spec, version_mod.parse(version) if version != "foo" else version, prereleases = p)).equals(e)
+
+    for spec_set_str, version, expected, installed in [
+        (">=1.2.3", "1.3.0a1", [True, True, False], True),
+        ("", "2.0a1", [True, True, False], True),
+        ("", "foo", [True, True, True], True),
+        (">=1.0,!=1.5", "1.6a1", [True, True, False], True),
+        ("===foo", "foo", [True, True, True], True),
+        ("===1.0a1", "1.0a1", [True, True, False], True),
+        (">=1.0,!=1.5", "1.5", [False, False, False], False),
+    ]:
+        spec_set = specifiers.parse_set(spec_set_str)
+        for p, e in zip(_PRE_OPTS, expected):
+            env.expect.that_bool(specifiers.set_contains(spec_set, version, prereleases = p)).equals(e)
+        env.expect.that_bool(specifiers.set_contains(spec_set, version, prereleases = False, installed = True)).equals(installed)
+
+def _test_prereleases_contains(name):
+    util.helper_target(native.filegroup, name = name + "_subject")
+    analysis_test(name = name, target = name + "_subject", impl = _test_prereleases_contains_impl)
+
+def _test_prereleases_property_impl(env, _target):
+    for spec_str, expected in [
+        (">=1.0", False),
+        (">=1.0a1", True),
+        ("!=1.0a1", False),
+        ("==1.*", False),
+        ("===foo", None),
+        ("===1.0a1", True),
+        ("===1.0", False),
+        ("~=1.0rc1", True),
+        ("<2.0.dev1", True),
+        ("==1.0+local", False),
+    ]:
+        env.expect.that_bool(specifiers.prereleases(specifiers.parse(spec_str)) == expected).equals(True)
+    for spec_set_str, expected in [
+        ("", None),
+        (">=1.0", None),
+        (">=1.0,<2.0a1", True),
+        ("!=1.0a1", None),
+    ]:
+        env.expect.that_bool(specifiers.set_prereleases(specifiers.parse_set(spec_set_str)) == expected).equals(True)
+
+def _test_prereleases_property(name):
+    util.helper_target(native.filegroup, name = name + "_subject")
+    analysis_test(name = name, target = name + "_subject", impl = _test_prereleases_property_impl)
+
+def _test_filter_impl(env, _target):
+    for spec_str, versions, expected in [
+        (">=1.2.3", ["1.2", "1.3", "1.5a1"], [["1.3"], ["1.3", "1.5a1"], ["1.3"]]),
+        (">=1.2.3", ["1.2", "1.5a1"], [["1.5a1"], ["1.5a1"], []]),
+        (">=1.0a1", ["1.0a2", "1.0", "2.0b1"], [["1.0a2", "1.0", "2.0b1"], ["1.0a2", "1.0", "2.0b1"], ["1.0"]]),
+        ("!=1.1", ["1.0a1", "1.2a1"], [["1.0a1", "1.2a1"], ["1.0a1", "1.2a1"], []]),
+        ("!=1.1", ["1.0a1", "1.2"], [["1.2"], ["1.0a1", "1.2"], ["1.2"]]),
+        ("===foo", ["foo", "FOO", "1.0"], [["foo", "FOO"], ["foo", "FOO"], ["foo", "FOO"]]),
+        ("===1.0a1", ["1.0a1", "1.0A1"], [["1.0a1", "1.0A1"], ["1.0a1", "1.0A1"], []]),
+    ]:
+        spec = specifiers.parse(spec_str)
+        for p, e in zip(_PRE_OPTS, expected):
+            env.expect.that_collection(specifiers.filter(spec, versions, prereleases = p)).contains_exactly(e).in_order()
+
+    for spec_set_str, versions, expected in [
+        (">=1.2.3", ["1.2", "1.3", "1.5a1"], [["1.3"], ["1.3", "1.5a1"], ["1.3"]]),
+        (">=1.2.3", ["1.2", "1.5a1"], [["1.5a1"], ["1.5a1"], []]),
+        ("", ["1.3", "1.5a1"], [["1.3"], ["1.3", "1.5a1"], ["1.3"]]),
+        ("", ["1.5a1"], [["1.5a1"], ["1.5a1"], []]),
+        ("", ["foo", "1.5a1"], [["foo", "1.5a1"], ["foo", "1.5a1"], ["foo"]]),
+        ("", ["1.5a1", "foo", "1.0"], [["foo", "1.0"], ["1.5a1", "foo", "1.0"], ["foo", "1.0"]]),
+        (">=1.0,<2.0a1", ["1.5", "2.0a0", "1.9b1"], [["1.5", "2.0a0", "1.9b1"], ["1.5", "2.0a0", "1.9b1"], ["1.5"]]),
+        (">=1.0,!=1.5", ["1.5", "1.6a1", "1.4"], [["1.4"], ["1.6a1", "1.4"], ["1.4"]]),
+        ("===foo", ["foo", "1.0"], [["foo"], ["foo"], ["foo"]]),
+        ("===foo,>=1", ["foo", "1.0"], [[], [], []]),
+    ]:
+        spec_set = specifiers.parse_set(spec_set_str)
+        for p, e in zip(_PRE_OPTS, expected):
+            env.expect.that_collection(specifiers.set_filter(spec_set, versions, prereleases = p)).contains_exactly(e).in_order()
+
+    # Parsed versions are accepted too, and returned as given.
+    parsed = [version_mod.parse(v) for v in ["1.2", "1.3", "1.5a1"]]
+    env.expect.that_collection(specifiers.set_filter(specifiers.parse_set(">=1.2.3"), parsed)).contains_exactly([parsed[1]])
+    env.expect.that_collection(specifiers.filter(specifiers.parse("===1.5a1"), parsed)).contains_exactly([parsed[2]])
+
+def _test_filter(name):
+    util.helper_target(native.filegroup, name = name + "_subject")
+    analysis_test(name = name, target = name + "_subject", impl = _test_filter_impl)
+
 def specifiers_test_suite(name):
     """Sets up the specifier tests.
 
@@ -595,6 +699,9 @@ def specifiers_test_suite(name):
             _test_parse_specifier_edge_cases,
             _test_parsed_version,
             _test_exclusive_ordered,
+            _test_prereleases_contains,
+            _test_prereleases_property,
+            _test_filter,
         ],
     )
 

@@ -12,6 +12,7 @@ load(
     "strip_whitespace",
     "try_parse_version",
     "version_key",
+    "version_to_string",
 )
 
 def _fail_invalid_specifier(spec):
@@ -158,29 +159,116 @@ def _matches(spec, v, version_str):
     Args:
         spec: The specifier struct.
         v: The parsed candidate version, or None if it isn't a valid version.
-        version_str: The candidate version string.
+        version_str: The candidate as a string, or None if the candidate was
+            given as a parsed version. === compares this string.
     """
     if spec.operator == "===":
+        if version_str == None:
+            version_str = version_to_string(v)
         return version_str.lower() == spec.version.lower()
     if v == None:
         return False
     return _matches_parsed(spec, v)
 
-def specifier_contains(spec, version_str):
-    """Checks if a version satisfies a specifier.
+def _coerce(candidate):
+    """Returns (parsed version or None, candidate string or None)."""
+    if type(candidate) == "string":
+        return try_parse_version(candidate), candidate
+    return candidate, None
+
+def specifier_prereleases(spec):
+    """Returns whether a specifier implies that pre-releases are allowed.
+
+    This is upstream's `Specifier.prereleases` for a specifier constructed
+    without an explicit `prereleases` argument: False for `!=` and for `==`
+    with a wildcard, None for `===` with a version that isn't valid PEP 440,
+    and otherwise whether the specifier's version is a pre-release.
 
     Args:
         spec: The specifier struct.
-        version_str: The version string to check.
 
     Returns:
-        True if the version satisfies the specifier, False otherwise. Like
-        upstream, a `version_str` that is not a valid PEP 440 version never
-        matches, except that `===` compares it as a string.
+        True, False, or None.
     """
-    if spec.operator == "===":
-        return _matches(spec, None, version_str)
-    return _matches(spec, try_parse_version(version_str), version_str)
+    operator = spec.operator
+    if operator == "!=":
+        return False
+    if operator == "==" and spec.version.endswith(".*"):
+        return False
+    if operator == "===":
+        v = try_parse_version(spec.version)
+        if v == None:
+            return None
+        return v.is_prerelease
+    return _spec_version(spec).is_prerelease
+
+def specifier_contains(spec, version, prereleases = None):
+    """Checks if a version satisfies a specifier.
+
+    This is upstream's `Specifier.contains`. Pre-releases are accepted unless
+    `prereleases` is False: there are no other candidates to prefer, so the
+    PEP 440 rule to exclude them doesn't apply. A `version` that is not a valid
+    PEP 440 version never matches, except that `===` compares it as a string.
+
+    Args:
+        spec: The specifier struct.
+        version: The version to check: a string or a struct returned by
+            `version.parse`.
+        prereleases: If False, pre-release versions never match. None (the
+            default) and True accept them.
+
+    Returns:
+        True if the version satisfies the specifier, False otherwise.
+    """
+    if spec.operator == "===" and type(version) == "string":
+        v, version_str = None, version
+        if prereleases == False:
+            v = try_parse_version(version)
+    else:
+        v, version_str = _coerce(version)
+    if not _matches(spec, v, version_str):
+        return False
+    return not (prereleases == False and v != None and v.is_prerelease)
+
+def specifier_filter(spec, versions, prereleases = None):
+    """Filters versions that satisfy a specifier.
+
+    This is upstream's `Specifier.filter`. With `prereleases = None`, whether
+    pre-releases are included comes from `prereleases(spec)`; if that is not
+    True, matching pre-releases are only returned when no matching final
+    release (or post-release) was found.
+
+    Args:
+        spec: The specifier struct.
+        versions: A list of versions: strings or structs returned by
+            `version.parse`. Strings that are not valid PEP 440 versions only
+            match `===`.
+        prereleases: True to include pre-releases, False to exclude them, or
+            None for the default behavior described above.
+
+    Returns:
+        The matching items of `versions`, in order.
+    """
+    include_prereleases = prereleases if prereleases != None else specifier_prereleases(spec)
+    result = []
+    held_prereleases = []
+    found_final = False
+    for item in versions:
+        v, version_str = _coerce(item)
+        if not _matches(spec, v, version_str):
+            continue
+        if v == None:
+            # Only === can match a string that isn't a valid version.
+            result.append(item)
+        elif not v.is_prerelease or include_prereleases:
+            found_final = True
+            result.append(item)
+        elif prereleases == None:
+            held_prereleases.append(item)
+
+    if not found_final and prereleases == None:
+        result.extend(held_prereleases)
+    return result
 
 def parse_specifier_set(spec_set_str):
     """Parses a comma-separated set of specifiers.
@@ -192,7 +280,8 @@ def parse_specifier_set(spec_set_str):
         spec_set_str: The specifier set string to parse.
 
     Returns:
-        A struct representing the parsed specifier set.
+        A struct with a `specs` field: the list of parsed specifiers (see
+        `parse`), in order.
     """
     spec_strs = [strip_whitespace(s) for s in spec_set_str.split(",")]
     specs = [parse_specifier(s) for s in spec_strs if s]
@@ -201,30 +290,119 @@ def parse_specifier_set(spec_set_str):
         specs = specs,
     )
 
-def specifier_set_contains(spec_set, version_str):
-    """Checks if a version satisfies all specifiers in the set.
+def specifier_set_prereleases(spec_set):
+    """Returns whether a specifier set implies that pre-releases are allowed.
+
+    This is upstream's `SpecifierSet.prereleases` for a set constructed without
+    an explicit `prereleases` argument: True if any specifier implies
+    pre-releases (see `prereleases`), otherwise None.
 
     Args:
         spec_set: The specifier set struct.
-        version_str: The version string to check.
 
     Returns:
-        True if the version satisfies all specifiers, False otherwise.
+        True or None.
     """
-    v = None
     for spec in spec_set.specs:
-        if spec.operator != "===":
-            v = try_parse_version(version_str)
-            break
+        if specifier_prereleases(spec):
+            return True
+    return None
 
+def _set_matches(spec_set, v, version_str):
     for spec in spec_set.specs:
         if not _matches(spec, v, version_str):
             return False
     return True
 
+def _needs_parse(spec_set):
+    for spec in spec_set.specs:
+        if spec.operator != "===":
+            return True
+    return False
+
+def specifier_set_contains(spec_set, version, prereleases = None, installed = None):
+    """Checks if a version satisfies all specifiers in the set.
+
+    This is upstream's `SpecifierSet.contains`. Pre-releases are accepted unless
+    `prereleases` is False. A `version` that is not a valid PEP 440 version
+    only matches if every specifier in the set is `===` and matches it as a
+    string. An empty set matches everything.
+
+    Args:
+        spec_set: The specifier set struct.
+        version: The version to check: a string or a struct returned by
+            `version.parse`.
+        prereleases: If False, pre-release versions never match. None (the
+            default) and True accept them.
+        installed: If True, a pre-release version is accepted even if
+            `prereleases` is False.
+
+    Returns:
+        True if the version satisfies all specifiers, False otherwise.
+    """
+    if type(version) == "string" and prereleases != False and not installed and not _needs_parse(spec_set):
+        # Only === specifiers (or none at all): no need to parse.
+        return _set_matches(spec_set, None, version)
+
+    v, version_str = _coerce(version)
+    if v != None and v.is_prerelease:
+        if installed:
+            prereleases = True
+        if prereleases == False:
+            return False
+    return _set_matches(spec_set, v, version_str)
+
+def _pep440_filter_prereleases(items, parsed):
+    """Drops pre-releases if there is at least one final release."""
+    for v in parsed:
+        if v != None and not v.is_prerelease:
+            return [item for item, v in zip(items, parsed) if v == None or not v.is_prerelease]
+    return items
+
+def specifier_set_filter(spec_set, versions, prereleases = None):
+    """Filters versions that satisfy all specifiers in the set.
+
+    This is upstream's `SpecifierSet.filter`. With `prereleases = None`,
+    pre-releases are included if `set_prereleases(spec_set)` is True;
+    otherwise matching pre-releases are only returned when no matching final
+    release (or post-release) was found, as PEP 440 recommends.
+
+    Args:
+        spec_set: The specifier set struct.
+        versions: A list of versions: strings or structs returned by
+            `version.parse`. Strings that are not valid PEP 440 versions only
+            match if every specifier is `===` (or the set is empty), and are
+            never treated as pre-releases.
+        prereleases: True to include pre-releases, False to exclude them, or
+            None for the default behavior described above.
+
+    Returns:
+        The matching items of `versions`, in order.
+    """
+    if prereleases == None:
+        prereleases = specifier_set_prereleases(spec_set)
+
+    items = []
+    parsed = []
+    for item in versions:
+        v, version_str = _coerce(item)
+        if prereleases == False and v != None and v.is_prerelease:
+            continue
+        if _set_matches(spec_set, v, version_str):
+            items.append(item)
+            parsed.append(v)
+
+    if prereleases != None:
+        return items
+    return _pep440_filter_prereleases(items, parsed)
+
 specifiers = struct(
     parse = parse_specifier,
     contains = specifier_contains,
+    filter = specifier_filter,
+    prereleases = specifier_prereleases,
     parse_set = parse_specifier_set,
     set_contains = specifier_set_contains,
+    set_filter = specifier_set_filter,
+    set_prereleases = specifier_set_prereleases,
 )
