@@ -9,6 +9,7 @@ load("@re.bzl", "re")
 load(
     "//pypackaging/private/markers:markers.bzl",
     "at_end",
+    "markers",
     "parse_marker_expression",
     "skip_ws",
     "syntax_error",
@@ -228,7 +229,8 @@ def _parse_requirement(req_str):
       requirements (with no specifiers it has an empty `specs` list), but
       `None` for URL requirements.
     - `marker` is the parsed marker tree (see `markers.parse`), or `None` when
-      the requirement has no marker.
+      the requirement has no marker. `marker_str` is the marker text exactly as
+      written (without surrounding whitespace), or `None`.
 
     Args:
         req_str: The requirement string to parse.
@@ -240,6 +242,7 @@ def _parse_requirement(req_str):
           extras: Sorted list of unique, normalized extras.
           specifier: A specifier set struct, or None for URL requirements.
           marker: The parsed marker tree, or None.
+          marker_str: The raw marker string, or None.
           req_str: The input string with surrounding whitespace stripped.
     """
     parsed = _parse(req_str)
@@ -249,9 +252,59 @@ def _parse_requirement(req_str):
         extras = sorted({utils.canonicalize_name(e): True for e in parsed.extras}.keys()),
         specifier = None if parsed.url != None else specifiers.parse_set(",".join(parsed.specs)),
         marker = parsed.marker,
+        marker_str = parsed.marker_str,
         req_str = req_str.strip(),
     )
 
+def _spec_str(spec):
+    return spec.operator + spec.version
+
+def _spec_key(spec):
+    if spec.operator == "===" or spec.version.endswith(".*"):
+        return (spec.operator, spec.version)
+    return (spec.operator, utils.canonicalize_version(spec.version, strip_trailing_zero = spec.operator != "~="))
+
+def _requirement_to_string(req):
+    """Serializes a parsed requirement like upstream `str(Requirement)`.
+
+    The project name and extras are emitted as originally written (extras
+    sorted and de-duplicated), specifiers are sorted and de-duplicated, and the
+    marker is normalized with `markers.to_string`.
+
+    Args:
+        req: A requirement struct returned by `parse`.
+
+    Returns:
+        The normalized requirement string.
+    """
+    parsed = _parse(req.req_str)
+    parts = [parsed.name]
+
+    extras = sorted({e: True for e in parsed.extras}.keys())
+    if extras:
+        parts.append("[{}]".format(",".join(extras)))
+
+    if req.specifier != None and req.specifier.specs:
+        seen = {}
+        spec_strs = []
+        for spec in sorted(req.specifier.specs, key = _spec_str):
+            key = _spec_key(spec)
+            if key not in seen:
+                seen[key] = True
+                spec_strs.append(_spec_str(spec))
+        parts.append(",".join(spec_strs))
+
+    if req.url:
+        parts.append(" @ " + req.url)
+        if req.marker:
+            parts.append(" ")
+
+    if req.marker:
+        parts.append("; " + markers.to_string(req.marker))
+
+    return "".join(parts)
+
 requirements = struct(
     parse = _parse_requirement,
+    to_string = _requirement_to_string,
 )

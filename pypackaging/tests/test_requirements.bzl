@@ -396,6 +396,47 @@ def _test_parse_requirement_grammar(name):
     util.helper_target(native.filegroup, name = name + "_subject")
     analysis_test(name = name, target = name + "_subject", impl = _test_parse_requirement_grammar_impl)
 
+def _test_parse_requirement_marker_str_impl(env, _target):
+    env.expect.that_bool(requirements.parse("foo>=1").marker_str == None).equals(True)
+    env.expect.that_bool(requirements.parse("foo @ https://x").marker_str == None).equals(True)
+    cases = [
+        ("foo>=1;python_version<'3.8'", "python_version<'3.8'"),
+        ("foo ; os_name == 'nt' and extra=='x'  ", "os_name == 'nt' and extra=='x'"),
+        ("foo @ https://x/a;b ;\t(os_name == 'nt')\n", "(os_name == 'nt')"),
+        ("foo; extra == 'my@extra'", "extra == 'my@extra'"),
+    ]
+    for s, expected in cases:
+        env.expect.where(req = s).that_str(requirements.parse(s).marker_str).equals(expected)
+
+def _test_parse_requirement_marker_str(name):
+    util.helper_target(native.filegroup, name = name + "_subject")
+    analysis_test(name = name, target = name + "_subject", impl = _test_parse_requirement_marker_str_impl)
+
+def _test_requirement_to_string_impl(env, _target):
+    # Expected values are `str(packaging.requirements.Requirement(...))` (26.2).
+    cases = [
+        ("packaging", "packaging"),
+        ("Foo_Bar[B,a,b]>=1;extra=='X_y'", "Foo_Bar[B,a,b]>=1; extra == \"x-y\""),
+        ("foo [ a , b ] ( >= 1 , < 2 ) ; os_name == 'a'", "foo[a,b]<2,>=1; os_name == \"a\""),
+        ("foo>=1,>=1", "foo>=1"),
+        ("foo>=1.0,>=1", "foo>=1"),
+        ("foo==1.0,", "foo==1.0"),
+        ("foo ()", "foo"),
+        ("foo[a,a]", "foo[a]"),
+        ("foo ===  1.0", "foo===1.0"),
+        ("foo@https://x", "foo @ https://x"),
+        ("foo @ https://x/a;os_name=='a'", "foo @ https://x/a;os_name=='a'"),
+        ("foo @ https://x ; extra=='A_B'", "foo @ https://x ; extra == \"a-b\""),
+        ("foo == 1 ;python_version>'3'", "foo==1; python_version > \"3\""),
+        ("requests[security, tests]>=2.8.1,==2.8.*;python_version<\"2.7\"", "requests[security,tests]==2.8.*,>=2.8.1; python_version < \"2.7\""),
+    ]
+    for s, expected in cases:
+        env.expect.where(req = s).that_str(requirements.to_string(requirements.parse(s))).equals(expected)
+
+def _test_requirement_to_string(name):
+    util.helper_target(native.filegroup, name = name + "_subject")
+    analysis_test(name = name, target = name + "_subject", impl = _test_requirement_to_string_impl)
+
 _ERROR_MESSAGES = [
     ("foo==1.0,,<2", "Invalid requirement: Expected comma (within version specifier), semicolon (after version specifier) or end\n    foo==1.0,,<2\n       ~~~~~~^"),
     ("foo,>=1", "Expected semicolon (after name with no version specifier) or end\n    foo,>=1\n       ^"),
@@ -454,6 +495,8 @@ def requirements_test_suite(name):
             _test_parse_requirement_no_name,
             _test_parse_requirement_marker_with_at,
             _test_parse_requirement_grammar,
+            _test_parse_requirement_marker_str,
+            _test_requirement_to_string,
             _test_parse_requirement_error_messages,
         ],
     )
