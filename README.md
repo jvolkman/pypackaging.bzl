@@ -32,6 +32,9 @@ The logic in this repository is derived from the following upstream projects:
    - **Purpose**: Wrapper logic for handling custom platform strings and legacy aliases in tag generation.
    - **License**: **MIT License**.
 
+The upstream copyright notices and license texts are reproduced in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and [LICENSES/](LICENSES).
+
 ## Modifications
 
 The original Python implementations have been ported to Starlark (`.bzl`) to allow evaluation during Bazel's analysis phase without requiring a Python interpreter. The core algorithms and compatibility rules remain faithful to the upstream implementations.
