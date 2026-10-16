@@ -464,7 +464,61 @@ _INVALID_SPECIFIERS = [
     ("set", ">=1.0;"),
     ("set", ">=1.0 <2.0"),
     ("set", ">=1.0,foo"),
+    ("spec", ""),
+    ("spec", "=="),
+    ("spec", "=1"),
+    ("spec", "~1.0"),
+    ("spec", "1.0"),
+    ("spec", "~=1"),
+    ("spec", "~=1.*"),
+    ("spec", "~=1.0.*"),
+    ("spec", "~=1.0+local"),
+    ("spec", "==1.*.1"),
+    ("spec", ">=1.0.*"),
+    ("spec", "==1.0a1.*"),
+    ("spec", "==1.0+local.*"),
+    ("spec", "==1.0.post1.*"),
+    ("spec", "==1.0 .*"),
+    ("spec", "==1.0\302\240.*"),
+    ("spec", "==1.0+"),
+    ("spec", "<=1.0+local"),
+    ("spec", "<1.0+local"),
+    ("spec", ">=1.0+local"),
+    ("spec", "> =1.0"),
+    ("spec", "<==1"),
+    ("spec", ">=foo"),
+    ("spec", "===foo bar"),
+    ("spec", "===foo\tbar"),
+    ("spec", "===foo\034bar"),
+    ("spec", "===foo;"),
+    ("spec", "===foo)"),
+    ("spec", "===foo\302\240bar"),
+    ("spec", "===foo\302\205bar"),
+    ("spec", "===a\342\200\203b"),
+    ("spec", "===a\343\200\200b"),
 ]
+
+def _test_parse_specifier_edge_cases_impl(env, _target):
+    for spec_str, operator, version in [
+        ("====1", "===", "=1"),
+        ("===", "===", ""),
+        ("=== foo", "===", "foo"),
+        ("===a\342\200\213b", "===", "a\342\200\213b"),  # U+200B is not whitespace
+        ("==\302\2401.0", "==", "1.0"),
+        ("\302\240>=1.0\302\240", ">=", "1.0"),
+        ("\t~= 1.0\n", "~=", "1.0"),
+        ("== v1.0.*", "==", "v1.0.*"),
+        ("!=1!1.0.*", "!=", "1!1.0.*"),
+        ("==1.0+Local.1", "==", "1.0+Local.1"),
+        ("<1.0.post1.dev1", "<", "1.0.post1.dev1"),
+    ]:
+        spec = specifiers.parse(spec_str)
+        env.expect.that_str(spec.operator).equals(operator)
+        env.expect.that_str(spec.version).equals(version)
+
+def _test_parse_specifier_edge_cases(name):
+    util.helper_target(native.filegroup, name = name + "_subject")
+    analysis_test(name = name, target = name + "_subject", impl = _test_parse_specifier_edge_cases_impl)
 
 def specifiers_test_suite(name):
     """Sets up the specifier tests.
@@ -482,6 +536,7 @@ def specifiers_test_suite(name):
             _test_contains_invalid_version,
             _test_compatible_release,
             _test_parse_set_empty_items,
+            _test_parse_specifier_edge_cases,
         ],
     )
 

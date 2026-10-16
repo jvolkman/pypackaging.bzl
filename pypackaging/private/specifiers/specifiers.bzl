@@ -5,7 +5,7 @@ Baseline: pypa/packaging 26.2
 """
 
 load("@re.bzl", "re")
-load("//pypackaging/private/version:version.bzl", "get_public_key", "make_version", "parse_version", "strip_whitespace", "try_parse_version")
+load("//pypackaging/private/version:version.bzl", "contains_whitespace", "get_public_key", "make_version", "parse_version", "strip_whitespace", "try_parse_version")
 
 def _fail_invalid_specifier(spec):
     fail("Invalid specifier: {}".format(spec))
@@ -63,7 +63,6 @@ _CMP_VERSION_RE = re.compile(
 )
 
 _DIGITS_AND_DOT = ".0123456789"
-_INVALID_ARBITRARY_CHARS = (" ", "\t", "\n", "\r", "\f", "\v", "\034", "\035", "\036", "\037", ";", ")")
 
 def _is_plain_release(version, min_segments = 1):
     """Returns True if version is a valid dot-separated numeric release, False if invalid, or None if non-numeric."""
@@ -81,29 +80,28 @@ def parse_specifier(spec_str):
     Returns:
         A struct representing the parsed specifier.
     """
-    stripped = spec_str.strip()
+    stripped = strip_whitespace(spec_str)
     if stripped.startswith("==="):
-        operator, version = "===", stripped[3:].strip()
-        for c in _INVALID_ARBITRARY_CHARS:
-            if c in version:
-                _fail_invalid_specifier(spec_str)
+        operator, version = "===", strip_whitespace(stripped[3:])
+        if ";" in version or ")" in version or contains_whitespace(version):
+            _fail_invalid_specifier(spec_str)
     elif stripped.startswith(("==", "!=")):
-        operator, version = stripped[:2], stripped[2:].strip()
+        operator, version = stripped[:2], strip_whitespace(stripped[2:])
         plain = _is_plain_release(version)
         if plain == False or (plain == None and not _EQ_VERSION_RE.fullmatch(version)):
             _fail_invalid_specifier(spec_str)
     elif stripped.startswith("~="):
-        operator, version = "~=", stripped[2:].strip()
+        operator, version = "~=", strip_whitespace(stripped[2:])
         plain = _is_plain_release(version, min_segments = 2)
         if plain == False or (plain == None and not _COMPAT_VERSION_RE.fullmatch(version)):
             _fail_invalid_specifier(spec_str)
     elif stripped.startswith(("<=", ">=")):
-        operator, version = stripped[:2], stripped[2:].strip()
+        operator, version = stripped[:2], strip_whitespace(stripped[2:])
         plain = _is_plain_release(version)
         if plain == False or (plain == None and not _CMP_VERSION_RE.fullmatch(version)):
             _fail_invalid_specifier(spec_str)
     elif stripped.startswith(("<", ">")):
-        operator, version = stripped[:1], stripped[1:].strip()
+        operator, version = stripped[:1], strip_whitespace(stripped[1:])
         plain = _is_plain_release(version)
         if plain == False or (plain == None and not _CMP_VERSION_RE.fullmatch(version)):
             _fail_invalid_specifier(spec_str)
