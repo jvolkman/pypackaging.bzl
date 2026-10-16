@@ -1,6 +1,7 @@
 """Tests for platform_tags.bzl."""
 
 load("@rules_testing//lib:analysis_test.bzl", "analysis_test", "test_suite")
+load("@rules_testing//lib:truth.bzl", "matching")
 load("@rules_testing//lib:util.bzl", "util")
 
 # buildifier: disable=bzl-visibility
@@ -10,7 +11,22 @@ load("//pypackaging/private/tags:cpython.bzl", "cpython_tags")
 load("//pypackaging/private/tags:manylinux.bzl", "manylinux_platforms")
 
 # buildifier: disable=bzl-visibility
-load("//pypackaging/private/tags:tags.bzl", "get_supported", "tags_internal")
+load("//pypackaging/private/tags:tags.bzl", "get_supported", "parse_tag", "tag_str", "tags_internal")
+
+def _parse_tag_subject_impl(ctx):
+    parse_tag(ctx.attr.tag, validate_order = ctx.attr.validate_order)
+    return []
+
+_parse_tag_subject = rule(
+    implementation = _parse_tag_subject_impl,
+    attrs = {
+        "tag": attr.string(),
+        "validate_order": attr.bool(),
+    },
+)
+
+def _tag_strs(tags):
+    return [tag_str(t) for t in tags]
 
 def _test_get_supported_basic_impl(env, _target):
     tags = get_supported(version = "311", platforms = ["any"], impl = "cp", abis = ["none"])
@@ -346,6 +362,71 @@ def _test_manylinux_glibc_major_3(name):
     util.helper_target(native.filegroup, name = name + "_subject")
     analysis_test(name = name, target = name + "_subject", impl = _test_manylinux_glibc_major_3_impl)
 
+def _test_parse_tag_impl(env, _target):
+    env.expect.that_collection(_tag_strs(parse_tag("py3-none-any"))).contains_exactly(["py3-none-any"])
+
+    # Compressed tag sets expand in component order; tags are lowercased.
+    env.expect.that_collection(_tag_strs(parse_tag("CP311.cp312-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64"))).contains_exactly([
+        "cp311-abi3-manylinux_2_17_x86_64",
+        "cp311-abi3-manylinux2014_x86_64",
+        "cp312-abi3-manylinux_2_17_x86_64",
+        "cp312-abi3-manylinux2014_x86_64",
+    ]).in_order()
+
+    # Tag structs compare by value.
+    env.expect.that_bool(parse_tag("PY3-None-ANY")[0] == parse_tag("py3-none-any")[0]).equals(True)
+
+    # validate_order accepts sorted components.
+    env.expect.that_collection(_tag_strs(parse_tag("py2.py3-none-any", validate_order = True))).contains_exactly([
+        "py2-none-any",
+        "py3-none-any",
+    ]).in_order()
+
+def _test_parse_tag(name):
+    util.helper_target(native.filegroup, name = name + "_subject")
+    analysis_test(name = name, target = name + "_subject", impl = _test_parse_tag_impl)
+
+def _test_parse_tag_dedupe_impl(env, _target):
+    # packaging returns a frozenset; duplicates are dropped, first occurrence kept.
+    env.expect.that_collection(_tag_strs(parse_tag("py3.py3-none-any"))).contains_exactly(["py3-none-any"])
+    env.expect.that_collection(_tag_strs(parse_tag("py3-none-any.any"))).contains_exactly(["py3-none-any"])
+    env.expect.that_collection(_tag_strs(parse_tag("PY3.py3.py2-none-any"))).contains_exactly([
+        "py3-none-any",
+        "py2-none-any",
+    ]).in_order()
+
+def _test_parse_tag_dedupe(name):
+    util.helper_target(native.filegroup, name = name + "_subject")
+    analysis_test(name = name, target = name + "_subject", impl = _test_parse_tag_dedupe_impl)
+
+def _test_parse_tag_empty_components_impl(env, _target):
+    # Like packaging, empty components are accepted.
+    env.expect.that_collection(_tag_strs(parse_tag("py3--any"))).contains_exactly(["py3--any"])
+    env.expect.that_collection(_tag_strs(parse_tag("-none-any"))).contains_exactly(["-none-any"])
+    env.expect.that_collection(_tag_strs(parse_tag("py3-none-any."))).contains_exactly([
+        "py3-none-any",
+        "py3-none-",
+    ]).in_order()
+    env.expect.that_collection(_tag_strs(parse_tag("--"))).contains_exactly(["--"])
+
+def _test_parse_tag_empty_components(name):
+    util.helper_target(native.filegroup, name = name + "_subject")
+    analysis_test(name = name, target = name + "_subject", impl = _test_parse_tag_empty_components_impl)
+
+def _test_parse_tag_wrong_parts_impl(env, target):
+    env.expect.that_target(target).failures().contains_predicate(matching.contains("Invalid tag"))
+
+def _test_parse_tag_wrong_parts(name):
+    util.helper_target(_parse_tag_subject, name = name + "_subject", tag = "py3-none")
+    analysis_test(name = name, target = name + "_subject", expect_failure = True, impl = _test_parse_tag_wrong_parts_impl)
+
+def _test_parse_tag_unsorted_impl(env, target):
+    env.expect.that_target(target).failures().contains_predicate(matching.contains("not in sorted order"))
+
+def _test_parse_tag_unsorted(name):
+    util.helper_target(_parse_tag_subject, name = name + "_subject", tag = "py3.py2-none-any", validate_order = True)
+    analysis_test(name = name, target = name + "_subject", expect_failure = True, impl = _test_parse_tag_unsorted_impl)
+
 def tags_test_suite(name):
     test_suite(
         name = name,
@@ -368,5 +449,10 @@ def tags_test_suite(name):
             _test_freethreaded_filtered_abis,
             _test_get_supported_lowercase,
             _test_manylinux_glibc_major_3,
+            _test_parse_tag,
+            _test_parse_tag_dedupe,
+            _test_parse_tag_empty_components,
+            _test_parse_tag_wrong_parts,
+            _test_parse_tag_unsorted,
         ],
     )

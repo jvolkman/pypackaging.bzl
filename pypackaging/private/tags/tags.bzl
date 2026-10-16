@@ -167,6 +167,17 @@ def get_supported(version = None, platforms = None, impl = None, abis = None):
 
     return supported
 
+def tag_str(tag):
+    """Returns the `interpreter-abi-platform` string form of a Tag struct.
+
+    Args:
+        tag: A Tag struct, as returned by `parse_tag`.
+
+    Returns:
+        The tag string, e.g. "py3-none-any".
+    """
+    return "{}-{}-{}".format(tag.interpreter, tag.abi, tag.platform)
+
 def _make_tag(interpreter, abi, platform):
     return struct(
         interpreter = interpreter.lower(),
@@ -177,6 +188,15 @@ def _make_tag(interpreter, abi, platform):
 def parse_tag(tag, validate_order = False):
     """Parses the provided tag into a list of Tag structs.
 
+    A compressed tag set such as `py2.py3-none-any` expands to one Tag per
+    combination. packaging returns a `frozenset`; this returns a list without
+    duplicates, in the order the components appear in the tag. Tag structs
+    have `interpreter`, `abi` and `platform` fields, are lowercased like
+    packaging's `Tag`, and compare equal by value.
+
+    Like packaging, empty components (e.g. `py3--any`) are not rejected; they
+    produce tags with empty fields that never match a supported tag.
+
     Args:
         tag: The tag to parse (e.g., "py3-none-any").
         validate_order: Whether to check if compressed tag set components are in sorted order.
@@ -184,27 +204,28 @@ def parse_tag(tag, validate_order = False):
     Returns:
         A list of Tag structs.
     """
-    component_parts = [component.split(".") for component in tag.split("-")]
-
-    if len(component_parts) != 3:
+    components = tag.split("-")
+    if len(components) != 3:
         fail("Invalid tag: {}".format(tag))
 
-    for parts in component_parts:
-        if "" in parts:
-            fail("Tag {} has an empty component".format(tag))
-
-        # Starlark doesn't have sorted() that works on arbitrary lists easily without mutability?
-        # Actually sorted() exists.
-        if validate_order and parts != sorted(parts):
-            fail("Tag component {} is not in sorted order".format(".".join(parts)))
+    component_parts = [component.split(".") for component in components]
+    if validate_order:
+        for parts in component_parts:
+            if parts != sorted(parts):
+                fail("Tag component {} is not in sorted order per PEP 425".format(".".join(parts)))
 
     interpreters, abis, platforms = component_parts
 
+    seen = {}
     result = []
     for interpreter in interpreters:
         for abi in abis:
             for platform_ in platforms:
-                result.append(_make_tag(interpreter, abi, platform_))
+                t = _make_tag(interpreter, abi, platform_)
+                key = tag_str(t)
+                if key not in seen:
+                    seen[key] = True
+                    result.append(t)
 
     return result
 

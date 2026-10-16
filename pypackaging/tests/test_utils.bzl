@@ -40,6 +40,19 @@ def _test_parse_sdist_filename(name):
     util.helper_target(native.filegroup, name = name + "_subject")
     analysis_test(name = name, target = name + "_subject", impl = _test_parse_sdist_filename_impl)
 
+def _test_parse_wheel_filename_tags_impl(env, _target):
+    # Empty tag components are accepted like packaging.
+    res = utils.parse_wheel_filename("foo-1.0-py3--any.whl")
+    env.expect.that_collection(["{}-{}-{}".format(t.interpreter, t.abi, t.platform) for t in res.tags]).contains_exactly(["py3--any"])
+
+    # Repeated compressed components don't produce duplicate tags.
+    res = utils.parse_wheel_filename("foo-1.0-py3-none-any.any.whl")
+    env.expect.that_int(len(res.tags)).equals(1)
+
+def _test_parse_wheel_filename_tags(name):
+    util.helper_target(native.filegroup, name = name + "_subject")
+    analysis_test(name = name, target = name + "_subject", impl = _test_parse_wheel_filename_tags_impl)
+
 def utils_test_suite(name):
     test_suite(
         name = name,
@@ -47,5 +60,6 @@ def utils_test_suite(name):
             _test_canonicalize_version,
             _test_parse_wheel_filename,
             _test_parse_sdist_filename,
+            _test_parse_wheel_filename_tags,
         ],
     )
