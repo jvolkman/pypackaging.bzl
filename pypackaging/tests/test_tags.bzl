@@ -548,6 +548,18 @@ def _test_get_python_version(name):
     util.helper_target(native.filegroup, name = name + "_subject")
     analysis_test(name = name, target = name + "_subject", impl = _test_get_python_version_impl)
 
+def _test_get_supported_no_platforms_impl(env, _target):
+    expected = get_supported(version = "311", platforms = ["any"], impl = "cp", abis = ["cp311"])
+    env.expect.that_str(expected[0]).equals("cp311-cp311-any")
+    for platforms in [None, [], ["macosx_9_0_x86_64"]]:
+        env.expect.where(platforms = platforms).that_collection(
+            get_supported(version = "311", platforms = platforms, impl = "cp", abis = ["cp311"]),
+        ).contains_exactly(expected).in_order()
+
+def _test_get_supported_no_platforms(name):
+    util.helper_target(native.filegroup, name = name + "_subject")
+    analysis_test(name = name, target = name + "_subject", impl = _test_get_supported_no_platforms_impl)
+
 def tags_test_suite(name):
     test_suite(
         name = name,
@@ -580,5 +592,6 @@ def tags_test_suite(name):
             _test_priority_map,
             _test_select_compatible,
             _test_get_python_version,
+            _test_get_supported_no_platforms,
         ],
     )

@@ -168,11 +168,10 @@ def get_supported(version = None, platforms = None, impl = None, abis = None):
       `manylinux1`. As in packaging, nothing older than glibc 2.17 is emitted
       on architectures other than x86_64/i686, so `manylinux2010_aarch64`
       expands to just `linux_aarch64`.
-    * `platforms=None` or `[]` means `["any"]`, and `abis=None` means no
-      interpreter-specific ABIs; pip uses the host's platforms and ABIs. If no
-      platform remains after expansion (e.g. `macosx_9_0_x86_64`), only the
-      platform-independent `*-none-any` tags are returned. `version` is
-      required and `impl` defaults to `"cp"`.
+    * `platforms=None`, `[]`, or platforms that all expand to nothing (e.g.
+      `macosx_9_0_x86_64`) mean `["any"]`, and `abis=None` means no
+      interpreter-specific ABIs; pip uses the host's platforms and ABIs.
+      `version` is required and `impl` defaults to `"cp"`.
     * Every `"abi3"` and `"none"` entry in `abis` is ignored for CPython;
       packaging only removes the first occurrence of each.
 
@@ -200,10 +199,9 @@ def get_supported(version = None, platforms = None, impl = None, abis = None):
     # Like pip's _get_custom_interpreter(): the version string is used verbatim.
     interpreter = impl + version
 
-    if not platforms:
-        expanded_platforms = ["any"]
-    else:
-        expanded_platforms = _expand_allowed_platforms(platforms)
+    # pip falls back to the host platforms when there are no platforms left
+    # after expansion; there is no host platform here, so use "any".
+    expanded_platforms = _expand_allowed_platforms(platforms) or ["any"]
 
     is_cpython = impl == "cp"
     if is_cpython:
