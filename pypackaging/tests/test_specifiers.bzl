@@ -340,6 +340,31 @@ def _test_specifier_set_contains(name):
     util.helper_target(native.filegroup, name = name + "_subject")
     analysis_test(name = name, target = name + "_subject", impl = _test_specifier_set_contains_impl)
 
+def _test_contains_invalid_version_impl(env, _target):
+    # packaging returns False (instead of raising) for candidates that are not
+    # valid PEP 440 versions. Only === can match them, as a plain string.
+    for spec_str in [">=1.0", "==1.0", "==1.*", "!=1.0", "!=1.*", "~=1.0", "<1.0", ">0", "<=1.0"]:
+        spec = specifiers.parse(spec_str)
+        spec_set = specifiers.parse_set(spec_str)
+        for version in ["foo", "1.0-foo", "", "1.0+", "1.0.*", "1.0 a1", "v"]:
+            env.expect.that_bool(specifiers.contains(spec, version)).equals(False)
+            env.expect.that_bool(specifiers.set_contains(spec_set, version)).equals(False)
+
+    env.expect.that_bool(specifiers.contains(specifiers.parse("===foo"), "FOO")).equals(True)
+    env.expect.that_bool(specifiers.set_contains(specifiers.parse_set("===foo"), "FOO")).equals(True)
+    env.expect.that_bool(specifiers.set_contains(specifiers.parse_set("===foo,>=1"), "foo")).equals(False)
+    env.expect.that_bool(specifiers.set_contains(specifiers.parse_set(">=1,===foo"), "foo")).equals(False)
+    env.expect.that_bool(specifiers.set_contains(specifiers.parse_set(""), "foo")).equals(True)
+
+    # Surrounding whitespace is ignored when parsing the candidate, but === compares the raw string.
+    env.expect.that_bool(specifiers.contains(specifiers.parse(">=1.0"), "1.0 ")).equals(True)
+    env.expect.that_bool(specifiers.contains(specifiers.parse("==1.0"), "\t1.0\n")).equals(True)
+    env.expect.that_bool(specifiers.contains(specifiers.parse("===1.0"), "1.0 ")).equals(False)
+
+def _test_contains_invalid_version(name):
+    util.helper_target(native.filegroup, name = name + "_subject")
+    analysis_test(name = name, target = name + "_subject", impl = _test_contains_invalid_version_impl)
+
 def specifiers_test_suite(name):
     test_suite(
         name = name,
@@ -348,5 +373,6 @@ def specifiers_test_suite(name):
             _test_specifier_contains,
             _test_specifier_set_contains,
             _test_specifier_contains_upstream,
+            _test_contains_invalid_version,
         ],
     )

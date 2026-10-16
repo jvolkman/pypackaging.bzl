@@ -5,7 +5,7 @@ Baseline: pypa/packaging 26.2
 """
 
 load("@re.bzl", "re")
-load("//pypackaging/private/version:version.bzl", "get_public_key", "make_version", "parse_version")
+load("//pypackaging/private/version:version.bzl", "get_public_key", "make_version", "parse_version", "try_parse_version")
 
 def _fail_invalid_specifier(spec):
     fail("Invalid specifier: {}".format(spec))
@@ -124,12 +124,16 @@ def specifier_contains(spec, version_str):
         version_str: The version string to check.
 
     Returns:
-        True if the version satisfies the specifier, False otherwise.
+        True if the version satisfies the specifier, False otherwise. Like
+        upstream, a `version_str` that is not a valid PEP 440 version never
+        matches, except that `===` compares it as a string.
     """
     if spec.operator == "===":
         return version_str.lower() == spec.version.lower()
 
-    v1 = parse_version(version_str)
+    v1 = try_parse_version(version_str)
+    if v1 == None:
+        return False
 
     if spec.operator == "==":
         if spec.version.endswith(".*"):
