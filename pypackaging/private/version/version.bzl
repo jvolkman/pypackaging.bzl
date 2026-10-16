@@ -137,8 +137,7 @@ _DIGITS_AND_DOT = ".0123456789"
 
 # UTF-8 encodings of the non-ASCII code points for which Python's str.isspace()
 # is true. Bazel strings are byte strings, so these show up as multi-character
-# sequences. The built-in strip() already handles the ASCII ones
-# (" \t\n\r\v\f" and \x1c-\x1f).
+# sequences. The ASCII ones (" \t\n\r\v\f" and \x1c-\x1f) are listed below.
 _UNICODE_WHITESPACE = (
     "\302\205",  # U+0085 NEXT LINE
     "\302\240",  # U+00A0 NO-BREAK SPACE
@@ -163,6 +162,12 @@ _UNICODE_WHITESPACE = (
 
 _ASCII_WHITESPACE = (" ", "\t", "\n", "\r", "\013", "\014", "\034", "\035", "\036", "\037")
 
+# The same characters as one string, for strip(). Always pass them
+# explicitly: the no-argument strip() of Bazel 7 also removes the Latin-1
+# characters \205 and \240, which are UTF-8 continuation bytes in Bazel's
+# byte strings.
+_ASCII_WHITESPACE_CHARS = "".join(_ASCII_WHITESPACE)
+
 def strip_whitespace(s):
     """Removes leading and trailing whitespace like Python's `str.strip()`.
 
@@ -175,7 +180,7 @@ def strip_whitespace(s):
     Returns:
         The stripped string.
     """
-    s = s.strip()
+    s = s.strip(_ASCII_WHITESPACE_CHARS)
 
     # Fast path: both ends are ASCII, so there is nothing more to strip.
     if not s or (s[0] < "\200" and s[-1] < "\200"):
@@ -185,12 +190,12 @@ def strip_whitespace(s):
         if s.startswith(_UNICODE_WHITESPACE):
             for ws in _UNICODE_WHITESPACE:
                 if s.startswith(ws):
-                    s = s[len(ws):].strip()
+                    s = s[len(ws):].strip(_ASCII_WHITESPACE_CHARS)
                     break
         elif s.endswith(_UNICODE_WHITESPACE):
             for ws in _UNICODE_WHITESPACE:
                 if s.endswith(ws):
-                    s = s[:-len(ws)].strip()
+                    s = s[:-len(ws)].strip(_ASCII_WHITESPACE_CHARS)
                     break
         else:
             break

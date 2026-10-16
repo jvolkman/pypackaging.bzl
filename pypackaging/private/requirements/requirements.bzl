@@ -237,7 +237,7 @@ def _parse_requirement(req_str):
         specifier = None if parsed.url != None else specifiers.parse_set(",".join(parsed.specs)),
         marker = parsed.marker,
         marker_str = parsed.marker_str,
-        req_str = req_str.strip(),
+        req_str = req_str.strip(" \t\n\r\013\014"),
     )
 
 def _spec_str(spec):

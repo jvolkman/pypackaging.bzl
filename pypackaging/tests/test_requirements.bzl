@@ -398,6 +398,13 @@ def _test_parse_requirement_grammar_impl(env, _target):
     env.expect.that_collection(req.extras).contains_exactly(["bar"])
     env.expect.that_bool(markers.evaluate(req.marker, {"os_name": "nt"})).equals(True)
 
+    # Non-ASCII text survives intact (Bazel 7's no-argument strip() would
+    # remove the trailing UTF-8 continuation byte of "\303\240").
+    req = requirements.parse(" foo @ https://x/\303\240 ")
+    env.expect.that_str(req.url).equals("https://x/\303\240")
+    env.expect.that_str(req.req_str).equals("foo @ https://x/\303\240")
+    env.expect.that_str(requirements.to_string(req)).equals("foo @ https://x/\303\240")
+
     # `===` with an empty version is a valid specifier.
     req = requirements.parse("foo===")
     env.expect.that_str(req.specifier.specs[0].operator).equals("===")
