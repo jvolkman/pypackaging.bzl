@@ -5,7 +5,7 @@ Baseline: pypa/packaging 26.2
 """
 
 load("@re.bzl", "re")
-load("//pypackaging/private/version:version.bzl", "get_public_key", "make_version", "parse_version", "try_parse_version")
+load("//pypackaging/private/version:version.bzl", "get_public_key", "make_version", "parse_version", "strip_whitespace", "try_parse_version")
 
 def _fail_invalid_specifier(spec):
     fail("Invalid specifier: {}".format(spec))
@@ -221,17 +221,17 @@ def specifier_contains(spec, version_str):
 def parse_specifier_set(spec_set_str):
     """Parses a comma-separated set of specifiers.
 
+    Like `packaging.specifiers.SpecifierSet`, empty items are ignored, so
+    `">=1.0,"`, `">=1.0,,<2"` and `" "` are accepted.
+
     Args:
         spec_set_str: The specifier set string to parse.
 
     Returns:
         A struct representing the parsed specifier set.
     """
-    if not spec_set_str:
-        return struct(specs = [])
-
-    spec_strs = [s.strip() for s in spec_set_str.split(",")]
-    specs = [parse_specifier(s) for s in spec_strs]
+    spec_strs = [strip_whitespace(s) for s in spec_set_str.split(",")]
+    specs = [parse_specifier(s) for s in spec_strs if s]
 
     return struct(
         specs = specs,

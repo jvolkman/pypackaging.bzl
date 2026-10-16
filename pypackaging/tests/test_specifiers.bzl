@@ -1,6 +1,7 @@
 """Tests for specifiers.bzl."""
 
 load("@rules_testing//lib:analysis_test.bzl", "analysis_test", "test_suite")
+load("@rules_testing//lib:truth.bzl", "matching")
 load("@rules_testing//lib:util.bzl", "util")
 
 # buildifier: disable=bzl-visibility
@@ -416,9 +417,63 @@ def _test_compatible_release(name):
     util.helper_target(native.filegroup, name = name + "_subject")
     analysis_test(name = name, target = name + "_subject", impl = _test_compatible_release_impl)
 
+def _spec_tuples(spec_set):
+    return [(s.operator, s.version) for s in spec_set.specs]
+
+def _test_parse_set_empty_items_impl(env, _target):
+    # SpecifierSet skips empty and whitespace-only items.
+    for spec_set_str, expected in [
+        (">=1.0,", [(">=", "1.0")]),
+        (",>=1.0", [(">=", "1.0")]),
+        (">=1.0,<2,", [(">=", "1.0"), ("<", "2")]),
+        (">=1.0,,<2", [(">=", "1.0"), ("<", "2")]),
+        (" >=1.0 , <2 ", [(">=", "1.0"), ("<", "2")]),
+        ("", []),
+        (" ", []),
+        ("\t", []),
+        (",", []),
+        (" , ", []),
+        (",,", []),
+        ("\302\240,>=1", [(">=", "1")]),
+    ]:
+        env.expect.that_collection(_spec_tuples(specifiers.parse_set(spec_set_str))).contains_exactly(expected).in_order()
+
+    env.expect.that_bool(specifiers.set_contains(specifiers.parse_set(" , "), "1.0")).equals(True)
+
+def _test_parse_set_empty_items(name):
+    util.helper_target(native.filegroup, name = name + "_subject")
+    analysis_test(name = name, target = name + "_subject", impl = _test_parse_set_empty_items_impl)
+
+def _parse_subject_impl(ctx):
+    if ctx.attr.kind == "set":
+        specifiers.parse_set(ctx.attr.spec)
+    else:
+        specifiers.parse(ctx.attr.spec)
+    return []
+
+_parse_subject = rule(
+    implementation = _parse_subject_impl,
+    attrs = {"kind": attr.string(), "spec": attr.string()},
+)
+
+def _invalid_specifier_test_impl(env, target):
+    env.expect.that_target(target).failures().contains_predicate(matching.contains("Invalid specifier"))
+
+# (kind, input) pairs that packaging rejects with InvalidSpecifier.
+_INVALID_SPECIFIERS = [
+    ("set", ">=1.0;"),
+    ("set", ">=1.0 <2.0"),
+    ("set", ">=1.0,foo"),
+]
+
 def specifiers_test_suite(name):
+    """Sets up the specifier tests.
+
+    Args:
+        name: the name of the test suite
+    """
     test_suite(
-        name = name,
+        name = name + "_standard",
         tests = [
             _test_specifier_basic,
             _test_specifier_contains,
@@ -426,5 +481,20 @@ def specifiers_test_suite(name):
             _test_specifier_contains_upstream,
             _test_contains_invalid_version,
             _test_compatible_release,
+            _test_parse_set_empty_items,
         ],
+    )
+
+    invalid_test_names = []
+
+    # buildifier: disable=enumerate
+    for i, (kind, spec) in enumerate(_INVALID_SPECIFIERS):
+        test_name = name + "_invalid_{}".format(i)
+        util.helper_target(_parse_subject, name = test_name + "_subject", kind = kind, spec = spec)
+        analysis_test(name = test_name, target = test_name + "_subject", expect_failure = True, impl = _invalid_specifier_test_impl)
+        invalid_test_names.append(test_name)
+
+    native.test_suite(
+        name = name,
+        tests = [":" + name + "_standard"] + [":" + n for n in invalid_test_names],
     )
