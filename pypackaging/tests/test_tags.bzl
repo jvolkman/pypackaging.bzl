@@ -11,7 +11,7 @@ load("//pypackaging/private/tags:cpython.bzl", "cpython_tags")
 load("//pypackaging/private/tags:manylinux.bzl", "manylinux_platforms")
 
 # buildifier: disable=bzl-visibility
-load("//pypackaging/private/tags:tags.bzl", "get_supported", "parse_tag", "tag_str", "tags_internal")
+load("//pypackaging/private/tags:tags.bzl", "get_supported", "parse_tag", "priority_map", "select_compatible", "tag_str", "tags_internal")
 
 def _parse_tag_subject_impl(ctx):
     parse_tag(ctx.attr.tag, validate_order = ctx.attr.validate_order)
@@ -474,6 +474,57 @@ def _test_expand_hyphen_normalization(name):
     util.helper_target(native.filegroup, name = name + "_subject")
     analysis_test(name = name, target = name + "_subject", impl = _test_expand_hyphen_normalization_impl)
 
+def _test_priority_map_impl(env, _target):
+    supported = ["cp311-cp311-manylinux_2_17_x86_64", "CP311-abi3-manylinux_2_17_x86_64", "py3-none-any", "cp311-cp311-manylinux_2_17_x86_64"]
+    ranks = priority_map(supported)
+    env.expect.that_dict(ranks).contains_exactly({
+        "cp311-cp311-manylinux_2_17_x86_64": 0,
+        "cp311-abi3-manylinux_2_17_x86_64": 1,
+        "py3-none-any": 2,
+    })
+
+    # Tag structs work too.
+    env.expect.that_dict(priority_map(parse_tag("py2.py3-none-any"))).contains_exactly({
+        "py2-none-any": 0,
+        "py3-none-any": 1,
+    })
+
+    env.expect.that_str(tag_str(parse_tag("PY3-NONE-ANY")[0])).equals("py3-none-any")
+
+def _test_priority_map(name):
+    util.helper_target(native.filegroup, name = name + "_subject")
+    analysis_test(name = name, target = name + "_subject", impl = _test_priority_map_impl)
+
+def _test_select_compatible_impl(env, _target):
+    supported = get_supported(version = "311", platforms = ["manylinux_2_28_x86_64"], impl = "cp", abis = ["cp311"])
+    filenames = [
+        "foo-1.0-py2-none-any.whl",
+        "foo-1.0-py3-none-any.whl",
+        "foo-1.0-cp311-cp311-linux_x86_64.whl",
+        "foo-1.0-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+        "foo-1.0-cp311-cp311-win_amd64.whl",
+        "foo-1.0-cp311-abi3-manylinux_2_28_x86_64.whl",
+        "foo-1.0-py2.py3-none-any.whl",
+    ]
+    tagged = [(f, parse_tag(f[len("foo-1.0-"):-len(".whl")])) for f in filenames]
+    expected = [
+        "foo-1.0-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+        "foo-1.0-cp311-cp311-linux_x86_64.whl",
+        "foo-1.0-cp311-abi3-manylinux_2_28_x86_64.whl",
+        "foo-1.0-py3-none-any.whl",
+        "foo-1.0-py2.py3-none-any.whl",
+    ]
+    env.expect.that_collection(select_compatible(supported, tagged)).contains_exactly(expected).in_order()
+    env.expect.that_collection(select_compatible(priority_map(supported), tagged)).contains_exactly(expected).in_order()
+
+    # Tag strings are accepted as well; nothing compatible gives an empty list.
+    env.expect.that_collection(select_compatible(["py3-none-any"], [("a", ["py2-none-any"]), ("b", ["PY3-none-any"])])).contains_exactly(["b"])
+    env.expect.that_collection(select_compatible(supported, [("a", ["cp311-cp311-win_amd64"])])).contains_exactly([])
+
+def _test_select_compatible(name):
+    util.helper_target(native.filegroup, name = name + "_subject")
+    analysis_test(name = name, target = name + "_subject", impl = _test_select_compatible_impl)
+
 def tags_test_suite(name):
     test_suite(
         name = name,
@@ -503,5 +554,7 @@ def tags_test_suite(name):
             _test_parse_tag_unsorted,
             _test_expand_apple_custom_prefix,
             _test_expand_hyphen_normalization,
+            _test_priority_map,
+            _test_select_compatible,
         ],
     )
