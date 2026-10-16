@@ -17,6 +17,8 @@ def _py_interpreter_range(python_version):
 def compatible_tags(python_version, interpreter, platforms):
     """Generates compatible tags.
 
+    Like packaging's `Tag`, the generated tags are lowercase.
+
     Args:
         python_version: The Python version tuple.
         interpreter: The interpreter string (e.g., "cp311").
@@ -26,12 +28,13 @@ def compatible_tags(python_version, interpreter, platforms):
         A list of compatible tag strings.
     """
     tags = []
+    platforms = [p.lower() for p in platforms]
     for version in _py_interpreter_range(python_version):
         for platform in platforms:
             tags.append("{}-none-{}".format(version, platform))
 
     if interpreter:
-        tags.append("{}-none-any".format(interpreter))
+        tags.append("{}-none-any".format(interpreter.lower()))
 
     for version in _py_interpreter_range(python_version):
         tags.append("{}-none-any".format(version))

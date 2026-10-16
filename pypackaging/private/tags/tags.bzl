@@ -149,7 +149,8 @@ def get_supported(version = None, platforms = None, impl = None, abis = None):
     if not impl:
         impl = "cp"
 
-    interpreter = impl + "".join([str(p) for p in python_version[:2]])
+    # Like pip's _get_custom_interpreter(): the version string is used verbatim.
+    interpreter = impl + version
 
     if not platforms:
         expanded_platforms = ["any"]

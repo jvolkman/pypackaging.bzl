@@ -4,6 +4,9 @@ load("@rules_testing//lib:analysis_test.bzl", "analysis_test", "test_suite")
 load("@rules_testing//lib:util.bzl", "util")
 
 # buildifier: disable=bzl-visibility
+load("//pypackaging/private/tags:cpython.bzl", "cpython_tags")
+
+# buildifier: disable=bzl-visibility
 load("//pypackaging/private/tags:tags.bzl", "get_supported", "tags_internal")
 
 def _test_get_supported_basic_impl(env, _target):
@@ -255,6 +258,61 @@ def _test_get_supported_linux_priority(name):
     util.helper_target(native.filegroup, name = name + "_subject")
     analysis_test(name = name, target = name + "_subject", impl = _test_get_supported_linux_priority_impl)
 
+def _test_freethreaded_filtered_abis_impl(env, _target):
+    # abi3/none are removed before checking the first ABI, like packaging.
+    tags = cpython_tags((3, 13), ["abi3", "cp313t"], ["any"])
+    env.expect.that_collection(tags).contains_exactly([
+        "cp313-cp313t-any",
+        "cp313-abi3t-any",
+        "cp313-none-any",
+    ] + ["cp3{}-abi3t-any".format(m) for m in range(12, 1, -1)]).in_order()
+
+    tags = cpython_tags((3, 13), ["none", "cp313t"], ["any"])
+    env.expect.that_collection(tags).contains("cp313-abi3t-any")
+    env.expect.that_collection(tags).not_contains("cp313-abi3-any")
+
+    # "cp" must be followed by digits for the ABI to count as free-threaded.
+    tags = cpython_tags((3, 13), ["cpt"], ["any"])
+    env.expect.that_collection(tags).contains("cp313-abi3-any")
+    env.expect.that_collection(tags).not_contains("cp313-abi3t-any")
+
+    # A free-threaded ABI that isn't first doesn't count.
+    tags = cpython_tags((3, 13), ["cp313", "cp313t"], ["any"])
+    env.expect.that_collection(tags).contains("cp313-abi3-any")
+    env.expect.that_collection(tags).not_contains("cp313-abi3t-any")
+
+def _test_freethreaded_filtered_abis(name):
+    util.helper_target(native.filegroup, name = name + "_subject")
+    analysis_test(name = name, target = name + "_subject", impl = _test_freethreaded_filtered_abis_impl)
+
+def _test_get_supported_lowercase_impl(env, _target):
+    # Like packaging's Tag, generated tags are lowercase. Free-threading
+    # detection is case-sensitive, also like packaging.
+    tags = get_supported(version = "313", platforms = ["Linux_X86_64"], impl = "cp", abis = ["CP313T"])
+    env.expect.that_collection(tags[:4]).contains_exactly([
+        "cp313-cp313t-linux_x86_64",
+        "cp313-abi3-linux_x86_64",
+        "cp313-none-linux_x86_64",
+        "cp312-abi3-linux_x86_64",
+    ]).in_order()
+    env.expect.that_collection(tags).contains("py313-none-linux_x86_64")
+
+    tags = get_supported(version = "310", platforms = ["Any"], impl = "PP", abis = ["PyPy310_PP73"])
+    env.expect.that_collection(tags).contains_exactly([
+        "pp310-pypy310_pp73-any",
+        "pp310-none-any",
+        "py310-none-any",
+        "py3-none-any",
+    ] + ["py3{}-none-any".format(m) for m in range(9, -1, -1)] + [
+        "pp310-none-any",
+        "py310-none-any",
+        "py3-none-any",
+    ] + ["py3{}-none-any".format(m) for m in range(9, -1, -1)]).in_order()
+
+def _test_get_supported_lowercase(name):
+    util.helper_target(native.filegroup, name = name + "_subject")
+    analysis_test(name = name, target = name + "_subject", impl = _test_get_supported_lowercase_impl)
+
 def tags_test_suite(name):
     test_suite(
         name = name,
@@ -274,5 +332,7 @@ def tags_test_suite(name):
             _test_expand_allowed_platforms_legacy_order,
             _test_expand_allowed_platforms_many_and_musl_order,
             _test_get_supported_linux_priority,
+            _test_freethreaded_filtered_abis,
+            _test_get_supported_lowercase,
         ],
     )
