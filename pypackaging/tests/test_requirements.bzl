@@ -5,6 +5,9 @@ load("@rules_testing//lib:truth.bzl", "matching")
 load("@rules_testing//lib:util.bzl", "util")
 
 # buildifier: disable=bzl-visibility
+load("//pypackaging/private/markers:markers.bzl", "markers")
+
+# buildifier: disable=bzl-visibility
 load("//pypackaging/private/requirements:requirements.bzl", "requirements")
 
 def _invalid_requirement_subject_rule_impl(ctx):
@@ -127,6 +130,61 @@ _INVALID_REQUIREMENTS = [
     "name @ https://example.com/; extra == 'example'",  # No space before URL marker (upstream rejects this)
     "name; (extra == 'example'",  # Unclosed parenthesis in marker
     "name @ ",  # Missing URL after @
+    # Invalid names.
+    "-foo",
+    "foo-",
+    ".foo",
+    "_foo",
+    "foo bar",
+    "foo 1.0",
+    "foo,bar",
+    "foo/bar",
+    "foo$bar",
+    "foo!",
+    "\nfoo",
+    "foo\n\n",
+    "foo\303\251",
+    # Invalid extras.
+    "foo[bar]]",
+    "foo[[bar]]",
+    "foo[-bar]",
+    "foo[_bar]",
+    "foo[bar-]",
+    "foo[,bar]",
+    "foo]",
+    # Invalid specifiers.
+    "foo==1.0,,<2",
+    "foo,>=1",
+    "foo ,",
+    "foo>=1.0 <2",
+    "foo>1.0<2",
+    "foo>=1.0.*",
+    "foo>=1.0+abc",
+    "foo~=1",
+    "foo==",
+    "foo =1.0",
+    "foo ==1.0)",
+    "foo (==1.0))",
+    "foo===a)b",
+    "foo==1.0 bar",
+    # A specifier and a URL.
+    "foo>=1.0 @ https://x",
+    "foo (>=1.0) @ https://x",
+    "foo @ https://x @ y",
+    # Empty or invalid markers.
+    "foo;",
+    "foo ;",
+    "foo; ",
+    "foo[a]; ",
+    "foo>=1.0;",
+    "foo>=1.0 ; ",
+    "foo @ https://x ;",
+    "foo;\n os_name=='nt'",
+    "foo; os_name == 'nt' or",
+    "foo>=1.0; os_name=='nt' and",
+    "foo; os_name == 'nt'; x",
+    "foo; os_name == '\\'",
+    "foo; bogus == 'x'",
 ]
 
 def _generic_invalid_test_impl(env, target):
@@ -265,14 +323,14 @@ def _test_parse_requirement_matrix(name):
     analysis_test(name = name, target = name + "_subject", impl = _test_parse_requirement_matrix_impl)
 
 def _test_parse_requirement_empty_string_impl(env, target):
-    env.expect.that_target(target).failures().contains_predicate(matching.contains("Empty requirement string"))
+    env.expect.that_target(target).failures().contains_predicate(matching.contains("Invalid requirement: Expected package name at the start of dependency specifier"))
 
 def _test_parse_requirement_empty_string(name):
     util.helper_target(_invalid_requirement_subject_rule, name = name + "_subject", req_str = " ")
     analysis_test(name = name, target = name + "_subject", expect_failure = True, impl = _test_parse_requirement_empty_string_impl)
 
 def _test_parse_requirement_no_name_impl(env, target):
-    env.expect.that_target(target).failures().contains_predicate(matching.contains("Missing requirement name"))
+    env.expect.that_target(target).failures().contains_predicate(matching.contains("Expected package name at the start of dependency specifier\n    ==0.0\n    ^"))
 
 def _test_parse_requirement_no_name(name):
     util.helper_target(_invalid_requirement_subject_rule, name = name + "_subject", req_str = "==0.0")
@@ -290,6 +348,92 @@ def _test_parse_requirement_marker_with_at_impl(env, _target):
 def _test_parse_requirement_marker_with_at(name):
     util.helper_target(native.filegroup, name = name + "_subject")
     analysis_test(name = name, target = name + "_subject", impl = _test_parse_requirement_marker_with_at_impl)
+
+def _test_parse_requirement_grammar_impl(env, _target):
+    # Empty parenthesized specifier.
+    for s in ["foo ()", "foo()", "foo (  )", "foo[a] ( )"]:
+        req = requirements.parse(s)
+        env.expect.where(req = s).that_str(req.name).equals("foo")
+        env.expect.where(req = s).that_collection(req.specifier.specs).has_size(0)
+
+    # A trailing comma in the specifier list is accepted.
+    for s in ["foo==1.0,", "foo (==1.0,)", "foo ( ==1.0 , <2 , )", "foo==1.0 , ; os_name == 'a'"]:
+        req = requirements.parse(s)
+        env.expect.where(req = s).that_str(req.specifier.specs[0].operator).equals("==")
+        env.expect.where(req = s).that_str(req.specifier.specs[0].version).equals("1.0")
+
+    # Extras are normalized, de-duplicated and sorted.
+    env.expect.that_collection(requirements.parse("Foo_Bar [B,a,b]").extras).contains_exactly(["a", "b"]).in_order()
+    env.expect.that_collection(requirements.parse("foo[Extra_Name, extra.name]").extras).contains_exactly(["extra-name"])
+    env.expect.that_collection(requirements.parse("foo[]").extras).has_size(0)
+    env.expect.that_collection(requirements.parse("foo[ ]").extras).has_size(0)
+
+    # Identifier edge cases accepted by upstream.
+    for s, name in [("a", "a"), ("1", "1"), ("foo_", "foo-"), ("foo-_", "foo-"), ("Zope.Interface>=5", "zope-interface")]:
+        env.expect.where(req = s).that_str(requirements.parse(s).name).equals(name)
+    env.expect.that_collection(requirements.parse("foo[a_]").extras).contains_exactly(["a-"])
+
+    # Whitespace: spaces/tabs anywhere between tokens, a single trailing newline.
+    for s in ["  foo  ", "\tfoo", "foo\n", "foo ==1 \n", "foo\t>=\t1.0"]:
+        env.expect.where(req = s).that_str(requirements.parse(s).name).equals("foo")
+
+    # URLs: everything up to whitespace, including ';' and '@'.
+    req = requirements.parse("foo@https://x/a;b@c")
+    env.expect.that_str(req.url).equals("https://x/a;b@c")
+    env.expect.that_bool(req.specifier == None).equals(True)
+    env.expect.that_bool(req.marker == None).equals(True)
+    req = requirements.parse("foo [bar] @ https://x/y.whl\t; os_name == 'nt'")
+    env.expect.that_str(req.url).equals("https://x/y.whl")
+    env.expect.that_collection(req.extras).contains_exactly(["bar"])
+    env.expect.that_bool(markers.evaluate(req.marker, {"os_name": "nt"})).equals(True)
+
+    # `===` with an empty version is a valid specifier.
+    req = requirements.parse("foo===")
+    env.expect.that_str(req.specifier.specs[0].operator).equals("===")
+    env.expect.that_str(req.specifier.specs[0].version).equals("")
+
+def _test_parse_requirement_grammar(name):
+    util.helper_target(native.filegroup, name = name + "_subject")
+    analysis_test(name = name, target = name + "_subject", impl = _test_parse_requirement_grammar_impl)
+
+_ERROR_MESSAGES = [
+    ("foo==1.0,,<2", "Invalid requirement: Expected comma (within version specifier), semicolon (after version specifier) or end\n    foo==1.0,,<2\n       ~~~~~~^"),
+    ("foo,>=1", "Expected semicolon (after name with no version specifier) or end\n    foo,>=1\n       ^"),
+    ("name @ file:///a b", "Expected semicolon (after URL and whitespace) or end\n    name @ file:///a b\n           ~~~~~~~~~~^"),
+    ("foo[a b]", "Expected comma between extra names\n    foo[a b]\n          ^"),
+    ("foo[a,]", "Expected extra name after comma\n    foo[a,]\n          ^"),
+    ("foo[_a]", "Expected matching RIGHT_BRACKET for LEFT_BRACKET, after extras\n    foo[_a]\n       ~^"),
+    ("foo (>=1", "Expected matching RIGHT_PARENTHESIS for LEFT_PARENTHESIS, after version specifier\n    foo (>=1\n        ~~~~^"),
+    ("foo>=1.*", ".* suffix can only be used with `==` or `!=` operators\n    foo>=1.*\n       ~~~~^"),
+    ("foo>=1.0+abc", "Local version label can only be used with `==` or `!=` operators\n    foo>=1.0+abc\n       ~~~~~^"),
+    ("foo @ ", "Expected URL after @\n    foo @ \n          ^"),
+    ("foo;", "Expected a marker variable or quoted string\n    foo;\n        ^"),
+    ("foo; os_name == 'nt' or", "Expected a marker variable or quoted string\n    foo; os_name == 'nt' or\n                           ^"),
+    ("foo; os_name == 'nt' xx", "Expected end of dependency specifier\n    foo; os_name == 'nt' xx\n                         ^"),
+    ("_foo", "Expected package name at the start of dependency specifier\n    _foo\n    ^"),
+]
+
+def _make_error_message_test_impl(message):
+    def _impl(env, target):
+        env.expect.that_target(target).failures().contains_predicate(matching.contains(message))
+
+    return _impl
+
+def _test_parse_requirement_error_messages(name):
+    tests = []
+
+    # buildifier: disable=enumerate
+    for i, (req_str, message) in enumerate(_ERROR_MESSAGES):
+        test_name = "{}_{}".format(name, i)
+        util.helper_target(_invalid_requirement_subject_rule, name = test_name + "_subject", req_str = req_str)
+        analysis_test(
+            name = test_name,
+            target = test_name + "_subject",
+            expect_failure = True,
+            impl = _make_error_message_test_impl(message),
+        )
+        tests.append(test_name)
+    native.test_suite(name = name, tests = [":" + t for t in tests])
 
 def requirements_test_suite(name):
     """Sets up the requirement parsing tests.
@@ -309,6 +453,8 @@ def requirements_test_suite(name):
             _test_parse_requirement_empty_string,
             _test_parse_requirement_no_name,
             _test_parse_requirement_marker_with_at,
+            _test_parse_requirement_grammar,
+            _test_parse_requirement_error_messages,
         ],
     )
 
