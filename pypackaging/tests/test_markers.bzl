@@ -367,6 +367,29 @@ def _test_marker_grammar(name):
     util.helper_target(native.filegroup, name = name + "_subject")
     analysis_test(name = name, target = name + "_subject", impl = _test_marker_grammar_impl)
 
+def _test_marker_to_string_impl(env, _target):
+    cases = [
+        ("os_name=='posix'", "os_name == \"posix\""),
+        ("python_version >= '3.8' and(os_name=='nt' or sys_platform  ==  'linux')", "python_version >= \"3.8\" and (os_name == \"nt\" or sys_platform == \"linux\")"),
+        ("((os_name == 'nt' or os_name == 'posix'))", "os_name == \"nt\" or os_name == \"posix\""),
+        ("(os_name == 'nt') and (os_name == 'posix' or os_name == 'x')", "os_name == \"nt\" and (os_name == \"posix\" or os_name == \"x\")"),
+        ("python_implementation == 'CPython' and platform.machine == 'x'", "platform_python_implementation == \"CPython\" and platform_machine == \"x\""),
+        ("extra == 'Foo_Bar'", "extra == \"foo-bar\""),
+        ("'Foo_Bar' == extra", "\"foo-bar\" == extra"),
+        ("extra == os_name", "extra == \"os-name\""),
+        ("os_name not  in 'x'", "os_name not in \"x\""),
+        ("'a' in extras", "\"a\" in extras"),
+        # Divergence: upstream would print `a and b or c` here.
+        ("os_name == 'a' and ((os_name == 'b' or os_name == 'c'))", "os_name == \"a\" and (os_name == \"b\" or os_name == \"c\")"),
+    ]
+    for src, expected in cases:
+        env.expect.where(marker = src).that_str(markers.to_string(markers.parse(src))).equals(expected)
+    env.expect.that_str(markers.to_string([])).equals("")
+
+def _test_marker_to_string(name):
+    util.helper_target(native.filegroup, name = name + "_subject")
+    analysis_test(name = name, target = name + "_subject", impl = _test_marker_to_string_impl)
+
 # Failure cases: (marker, environment overrides or None to only parse, expected
 # message fragments).
 _FAILURES = [
@@ -495,6 +518,7 @@ def markers_test_suite(name):
             _test_marker_aliases,
             _test_marker_string_literals,
             _test_marker_grammar,
+            _test_marker_to_string,
         ],
     )
 

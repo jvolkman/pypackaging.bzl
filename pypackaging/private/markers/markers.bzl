@@ -392,6 +392,10 @@ def parse_marker(marker_str):
         syntax_error(ctx, "Expected end of marker expression", pos)
     return tree
 
+# ---------------------------------------------------------------------------
+# Serialization (upstream `str(Marker)`)
+# ---------------------------------------------------------------------------
+
 def _format_node(node):
     if node.type == "string":
         return "\"" + node.value + "\""
@@ -400,6 +404,60 @@ def _format_node(node):
 def _format_item(item):
     lhs, op, rhs = item
     return "{} {} {}".format(_format_node(lhs), op, _format_node(rhs))
+
+def marker_to_string(markers):
+    """Serializes a parsed marker tree like upstream `str(Marker)`.
+
+    Variables are emitted in their normalized form and string values are
+    always double-quoted (without escaping, like upstream). Redundant
+    parentheses around a whole group are dropped.
+
+    Divergence: upstream also drops the parentheses of a doubly parenthesized
+    nested group, e.g. `a and ((b or c))` becomes `a and b or c`, which changes
+    the meaning. This implementation keeps them: `a and (b or c)`.
+
+    Args:
+        markers: A parsed marker tree (from `parse`).
+
+    Returns:
+        The normalized marker string ("" for an empty tree).
+    """
+    out = []
+
+    # Work items: ("node", node, first) or ("text", text), processed LIFO.
+    work = [("node", markers, True)]
+    for _ in range(1 << 30):
+        if not work:
+            break
+        entry = work.pop()
+        if entry[0] == "text":
+            out.append(entry[1])
+            continue
+        node = entry[1]
+        first = entry[2]
+
+        # A single-element list wrapping a list or item is formatted as its
+        # element (upstream `_format_marker`).
+        for _ in range(1 << 30):
+            if type(node) == "list" and len(node) == 1 and type(node[0]) in ("list", "tuple"):
+                node = node[0]
+            else:
+                break
+
+        if type(node) == "tuple":
+            out.append(_format_item(node))
+        elif type(node) == "list":
+            if not first:
+                work.append(("text", ")"))
+            for i in range(len(node) - 1, -1, -1):
+                work.append(("node", node[i], False))
+                if i:
+                    work.append(("text", " "))
+            if not first:
+                work.append(("text", "("))
+        else:
+            out.append(node)
+    return "".join(out)
 
 # ---------------------------------------------------------------------------
 # Evaluation
@@ -665,4 +723,5 @@ def evaluate_markers(markers, environment):
 markers = struct(
     parse = parse_marker,
     evaluate = evaluate_markers,
+    to_string = marker_to_string,
 )
