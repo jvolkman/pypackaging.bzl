@@ -1,6 +1,7 @@
 """Tests for version.bzl."""
 
 load("@rules_testing//lib:analysis_test.bzl", "analysis_test", "test_suite")
+load("@rules_testing//lib:truth.bzl", "matching")
 load("@rules_testing//lib:util.bzl", "util")
 
 # buildifier: disable=bzl-visibility
@@ -186,13 +187,82 @@ def _test_version_cmp(name):
     util.helper_target(native.filegroup, name = name + "_subject")
     analysis_test(name = name, target = name + "_subject", impl = _test_version_cmp_impl)
 
+def _test_parse_version_whitespace_impl(env, _target):
+    # packaging.version.Version ignores surrounding whitespace (Python's \s),
+    # including Unicode whitespace.
+    for s, normalized_key_of in [
+        (" 1.0", "1.0"),
+        ("1.0\n", "1.0"),
+        ("\t0!01.2c-dev+x ", "1.2rc0.dev0+x"),
+        ("1.0\013\014\034\035\036\037", "1.0"),
+        ("\302\2401.0\302\240", "1.0"),
+        ("\302\205 1.0", "1.0"),
+        ("1.0\342\200\250", "1.0"),
+        ("\343\200\200 \342\200\2111.0rc1", "1.0rc1"),
+    ]:
+        v = version.parse(s)
+        env.expect.that_bool(v.key == version.parse(normalized_key_of).key).equals(True)
+        env.expect.that_str(v.version_str).equals(v.version_str.strip())
+
+    env.expect.that_str(version.parse("  1.2.3\n").version_str).equals("1.2.3")
+
+def _test_parse_version_whitespace(name):
+    util.helper_target(native.filegroup, name = name + "_subject")
+    analysis_test(name = name, target = name + "_subject", impl = _test_parse_version_whitespace_impl)
+
+def _parse_version_subject_impl(ctx):
+    version.parse(ctx.attr.version_str)
+    return []
+
+_parse_version_subject = rule(
+    implementation = _parse_version_subject_impl,
+    attrs = {"version_str": attr.string()},
+)
+
+def _invalid_version_test_impl(env, target):
+    env.expect.that_target(target).failures().contains_predicate(matching.contains("Invalid version"))
+
+# Inputs that packaging.version.Version rejects.
+_INVALID_VERSIONS = [
+    "",
+    " ",
+    "1.0 a1",
+    "1.0+loc al",
+    "1.0\302\240a1",
+    "\342\200\2131.0",  # U+200B ZERO WIDTH SPACE is not whitespace
+    "1.0.",
+    "1.0+",
+    "1!2!3",
+    "foo",
+]
+
 def version_test_suite(name):
+    """Sets up the version tests.
+
+    Args:
+        name: the name of the test suite
+    """
     test_suite(
-        name = name,
+        name = name + "_standard",
         tests = [
             _test_parse_version_basic,
             _test_parse_version_parts,
+            _test_parse_version_whitespace,
             _test_version_cmp,
             _test_version_cmp_upstream,
         ],
+    )
+
+    invalid_test_names = []
+
+    # buildifier: disable=enumerate
+    for i, s in enumerate(_INVALID_VERSIONS):
+        test_name = name + "_invalid_{}".format(i)
+        util.helper_target(_parse_version_subject, name = test_name + "_subject", version_str = s)
+        analysis_test(name = test_name, target = test_name + "_subject", expect_failure = True, impl = _invalid_version_test_impl)
+        invalid_test_names.append(test_name)
+
+    native.test_suite(
+        name = name,
+        tests = [":" + name + "_standard"] + [":" + n for n in invalid_test_names],
     )

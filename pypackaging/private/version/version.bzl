@@ -163,26 +163,144 @@ def make_version(epoch, release, pre, post, dev, local, version_str = ""):
 
 _DIGITS_AND_DOT = ".0123456789"
 
+# UTF-8 encodings of the non-ASCII code points for which Python's str.isspace()
+# is true. Bazel strings are byte strings, so these show up as multi-character
+# sequences. The built-in strip() already handles the ASCII ones
+# (" \t\n\r\v\f" and \x1c-\x1f).
+_UNICODE_WHITESPACE = (
+    "\302\205",  # U+0085 NEXT LINE
+    "\302\240",  # U+00A0 NO-BREAK SPACE
+    "\341\232\200",  # U+1680 OGHAM SPACE MARK
+    "\342\200\200",  # U+2000 EN QUAD
+    "\342\200\201",  # U+2001 EM QUAD
+    "\342\200\202",  # U+2002 EN SPACE
+    "\342\200\203",  # U+2003 EM SPACE
+    "\342\200\204",  # U+2004 THREE-PER-EM SPACE
+    "\342\200\205",  # U+2005 FOUR-PER-EM SPACE
+    "\342\200\206",  # U+2006 SIX-PER-EM SPACE
+    "\342\200\207",  # U+2007 FIGURE SPACE
+    "\342\200\210",  # U+2008 PUNCTUATION SPACE
+    "\342\200\211",  # U+2009 THIN SPACE
+    "\342\200\212",  # U+200A HAIR SPACE
+    "\342\200\250",  # U+2028 LINE SEPARATOR
+    "\342\200\251",  # U+2029 PARAGRAPH SEPARATOR
+    "\342\200\257",  # U+202F NARROW NO-BREAK SPACE
+    "\342\201\237",  # U+205F MEDIUM MATHEMATICAL SPACE
+    "\343\200\200",  # U+3000 IDEOGRAPHIC SPACE
+)
+
+_ASCII_WHITESPACE = (" ", "\t", "\n", "\r", "\013", "\014", "\034", "\035", "\036", "\037")
+
+def strip_whitespace(s):
+    """Removes leading and trailing whitespace like Python's `str.strip()`.
+
+    Unlike the built-in `strip()`, this also removes UTF-8 encoded Unicode
+    whitespace such as U+00A0.
+
+    Args:
+        s: The string to strip.
+
+    Returns:
+        The stripped string.
+    """
+    s = s.strip()
+
+    # Fast path: both ends are ASCII, so there is nothing more to strip.
+    if not s or (s[0] < "\200" and s[-1] < "\200"):
+        return s
+
+    for _ in range(len(s)):
+        if s.startswith(_UNICODE_WHITESPACE):
+            for ws in _UNICODE_WHITESPACE:
+                if s.startswith(ws):
+                    s = s[len(ws):].strip()
+                    break
+        elif s.endswith(_UNICODE_WHITESPACE):
+            for ws in _UNICODE_WHITESPACE:
+                if s.endswith(ws):
+                    s = s[:-len(ws)].strip()
+                    break
+        else:
+            break
+    return s
+
+def contains_whitespace(s):
+    """Returns True if `s` contains a character that Python's `\\s` matches.
+
+    Args:
+        s: The string to check.
+
+    Returns:
+        True if the string contains ASCII or UTF-8 encoded Unicode whitespace.
+    """
+    for ws in _ASCII_WHITESPACE:
+        if ws in s:
+            return True
+    for ws in _UNICODE_WHITESPACE:
+        if ws in s:
+            return True
+    return False
+
 def parse_version(version_str):
     """Parses a version string into a struct.
+
+    Leading and trailing whitespace is ignored, like `packaging.version.Version`.
+
+    Args:
+        version_str: The version string to parse. Fails if it isn't a valid
+            PEP 440 version.
+
+    Returns:
+        A struct representing the parsed version, with these fields:
+
+        * `version_str`: the input string without surrounding whitespace.
+        * `epoch`: the epoch as an int.
+        * `release`: the release segment as a tuple of ints.
+        * `pre`: `("a" | "b" | "rc", int)` or None.
+        * `post`: `("post", int)` or None.
+        * `dev`: `("dev", int)` or None.
+        * `local`: the local segment as a tuple of lowercase strings and ints,
+          or None.
+        * `key`: a sort key. Compare keys to compare versions.
+        * `is_prerelease`, `is_postrelease`, `is_devrelease`: bools.
+    """
+    v = try_parse_version(version_str)
+    if v == None:
+        _fail_invalid_version(version_str)
+    return v
+
+def try_parse_version(version_str):
+    """Like `parse_version`, but returns None instead of failing on invalid input.
 
     Args:
         version_str: The version string to parse.
 
     Returns:
-        A struct representing the parsed version.
+        A struct representing the parsed version, or None if `version_str` is
+        not a valid PEP 440 version.
+    """
+    return parse_stripped_version(strip_whitespace(version_str))
+
+def parse_stripped_version(version_str):
+    """Parses a version string that must not contain any whitespace.
+
+    Args:
+        version_str: The version string to parse.
+
+    Returns:
+        A struct representing the parsed version, or None if `version_str` is
+        not a valid PEP 440 version.
     """
     if version_str and not version_str.lstrip(_DIGITS_AND_DOT):
         parts = version_str.split(".")
         if "" in parts:
-            _fail_invalid_version(version_str)
+            return None
         release = tuple([int(p) for p in parts])
         return make_version(0, release, None, None, None, None, version_str)
 
     m = _VERSION_RE.fullmatch(version_str)
     if not m:
-        _fail_invalid_version(version_str)
-        return None  # Unreachable
+        return None
 
     epoch_str = m.group("epoch")
     epoch = int(epoch_str) if epoch_str else 0
