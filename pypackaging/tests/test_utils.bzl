@@ -92,6 +92,35 @@ def _test_canonicalize_version_impl(env, _target):
     env.expect.that_str(utils.canonicalize_version("1.0.0", strip_trailing_zero = False)).equals("1.0.0")
     env.expect.that_str(utils.canonicalize_version("1.4.0.0.0")).equals("1.4")
 
+    # (input, strip_trailing_zero=True, strip_trailing_zero=False), from packaging 26.2.
+    cases = [
+        ("1.0.1", "1.0.1", "1.0.1"),
+        ("0.0.0", "0", "0.0.0"),
+        ("1!0.0", "1!0", "1!0.0"),
+        ("v1.0", "1", "1.0"),
+        ("1.0-1", "1.post1", "1.0.post1"),
+        ("1.0c1", "1rc1", "1.0rc1"),
+        ("1.0.0.0.post1.dev0", "1.post1.dev0", "1.0.0.0.post1.dev0"),
+        ("1.0+UBUNTU.1", "1+ubuntu.1", "1.0+ubuntu.1"),
+        ("1.0+ubuntu-1", "1+ubuntu.1", "1.0+ubuntu.1"),
+        ("2.0.0-rc.1", "2rc1", "2.0.0rc1"),
+        ("01!1.0", "1!1", "1!1.0"),
+        ("10.0.00", "10", "10.0.0"),
+        ("1.0.0b0.post0.dev0+x", "1b0.post0.dev0+x", "1.0.0b0.post0.dev0+x"),
+        # Leading and trailing whitespace is ignored.
+        ("  1.0  ", "1", "1.0"),
+        ("\t1.0.0\n", "1", "1.0.0"),
+        # Invalid versions are returned unchanged.
+        ("invalid", "invalid", "invalid"),
+        ("foo bar baz", "foo bar baz", "foo bar baz"),
+        ("1.0.", "1.0.", "1.0."),
+        ("  1.0-foo ", "  1.0-foo ", "  1.0-foo "),
+        ("", "", ""),
+    ]
+    for version_str, stripped, unstripped in cases:
+        env.expect.where(version = version_str).that_str(utils.canonicalize_version(version_str)).equals(stripped)
+        env.expect.where(version = version_str).that_str(utils.canonicalize_version(version_str, strip_trailing_zero = False)).equals(unstripped)
+
 def _test_canonicalize_version(name):
     util.helper_target(native.filegroup, name = name + "_subject")
     analysis_test(name = name, target = name + "_subject", impl = _test_canonicalize_version_impl)
@@ -134,6 +163,16 @@ def _test_parse_wheel_filename_tags(name):
     util.helper_target(native.filegroup, name = name + "_subject")
     analysis_test(name = name, target = name + "_subject", impl = _test_parse_wheel_filename_tags_impl)
 
+_INVALID_WHEEL_FILENAMES = [
+    ("foo-notaversion-py3-none-any.whl", "Invalid wheel filename (invalid version)"),
+    ("foo-1.0.-py3-none-any.whl", "Invalid wheel filename (invalid version)"),
+]
+
+_INVALID_SDIST_FILENAMES = [
+    ("foo-bar.tar.gz", "Invalid sdist filename (invalid version)"),
+    ("foo-.tar.gz", "Invalid sdist filename (invalid version)"),
+]
+
 _INVALID_NAMES = [
     ("-foo-", "name is invalid"),
     ("foo bar!", "name is invalid"),
@@ -151,6 +190,8 @@ def utils_test_suite(name):
     """
     failure_tests = []
     failure_tests += _failure_tests(name + "_canonicalize_name_invalid", "canonicalize_name_validate", _INVALID_NAMES)
+    failure_tests += _failure_tests(name + "_parse_wheel_filename_invalid", "parse_wheel_filename", _INVALID_WHEEL_FILENAMES)
+    failure_tests += _failure_tests(name + "_parse_sdist_filename_invalid", "parse_sdist_filename", _INVALID_SDIST_FILENAMES)
 
     test_suite(
         name = name + "_standard",

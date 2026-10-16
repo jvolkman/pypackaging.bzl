@@ -3,6 +3,7 @@
 Derived from pypa/packaging: packaging/utils.py (Apache 2.0 / BSD).
 """
 
+load("@re.bzl", "re")
 load("//pypackaging/private/tags:tags.bzl", "tags")
 load("//pypackaging/private/version:version.bzl", "version")
 
@@ -14,6 +15,34 @@ _VALID_NORMALIZED_CHAR = _VALID_NORMALIZED_START + "-"
 _VALID_WHEEL_NAME_CHARS = _LOWER + _UPPER + _DIGITS + "._"
 _VALID_NAME_START = _LOWER + _UPPER + _DIGITS
 _VALID_NAME_CHAR = _VALID_NAME_START + "._-"
+
+# PEP 440 version pattern, as used by version.parse(). It is needed here to
+# detect invalid versions without failing, since Starlark can't catch fail().
+_VERSION_RE = re.compile(r"""
+    v?
+    (?:
+        (?:[0-9]+!)?
+        [0-9]+(?:\.[0-9]+)*
+        (?:[._-]?(?:alpha|a|beta|b|preview|pre|c|rc)[._-]?[0-9]*)?
+        (?:
+            (?:-[0-9]+)
+            |
+            (?:[._-]?(?:post|rev|r)[._-]?[0-9]*)
+        )?
+        (?:[._-]?dev[._-]?[0-9]*)?
+    )
+    (?:\+[a-z0-9]+(?:[._-][a-z0-9]+)*)?
+""", re.X | re.I)
+
+def _try_parse_version(version_str):
+    """Parses a version like packaging's Version(), or returns None if invalid.
+
+    Leading and trailing whitespace is ignored, like packaging.
+    """
+    version_str = version_str.strip()
+    if not _VERSION_RE.fullmatch(version_str):
+        return None
+    return version.parse(version_str)
 
 def _is_valid_name(name):
     # Equivalent to packaging's
@@ -93,20 +122,24 @@ def is_normalized_name(name):
 def canonicalize_version(version_input, strip_trailing_zero = True):
     """Return a canonical form of a version as a string.
 
+    With `strip_trailing_zero = False`, the result is the normalized PEP 440
+    form, i.e. packaging's `str(Version(...))`.
+
     Args:
         version_input: The version to canonicalize (string or Version struct).
-        strip_trailing_zero: Whether to strip trailing zeros.
+            A string that isn't a valid PEP 440 version is returned unchanged,
+            like packaging. Leading and trailing whitespace is ignored.
+        strip_trailing_zero: Whether to strip trailing zeros from the release
+            segment (e.g. "1.0.0" -> "1").
 
     Returns:
         The canonicalized version string.
     """
     v = version_input
     if type(v) == "string":
-        # Upstream returns unaltered if invalid.
-        # We try to parse, if it fails (returns None or fails), we return the original string.
-        # But our parse_version fails hard via fail().
-        # Let's assume valid for now or handle failure if we can catch it (Starlark can't catch easily).
-        v = version.parse(version_input)
+        v = _try_parse_version(version_input)
+        if v == None:
+            return version_input
 
     # Reconstruct string, potentially stripping trailing zeros.
     release = v.release
@@ -169,8 +202,9 @@ def parse_wheel_filename(filename, validate_order = False):
 
     name = canonicalize_name(name_part)
 
-    # version.parse might fail hard.
-    ver = version.parse(parts[1])
+    ver = _try_parse_version(parts[1])
+    if ver == None:
+        fail("Invalid wheel filename (invalid version): {}".format(repr(filename)))
 
     if dashes == 5:
         build_part = parts[2]
@@ -227,7 +261,9 @@ def parse_sdist_filename(filename):
     version_part = file_stem[idx + 1:]
 
     name = canonicalize_name(name_part)
-    ver = version.parse(version_part)
+    ver = _try_parse_version(version_part)
+    if ver == None:
+        fail("Invalid sdist filename (invalid version): {}".format(repr(filename)))
 
     return struct(
         name = name,
