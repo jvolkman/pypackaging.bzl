@@ -32,8 +32,8 @@ load(
     "contains_whitespace",
     "get_public_key",
     "lstrip_whitespace",
-    "match_version_prefix",
     "parse_stripped_version",
+    "scan_version_prefix",
     "strip_whitespace",
     "try_parse_version",
     "version_key",
@@ -65,7 +65,7 @@ def try_parse_specifier(spec_str):
     return _try_parse_stripped_specifier(strip_whitespace(spec_str))
 
 def _try_parse_stripped_specifier(stripped):
-    """Like `try_parse_specifier` for a string without surrounding whitespace."""
+    """Like `try_parse_specifier`, for a string without surrounding whitespace."""
     if stripped.startswith("==="):
         version = lstrip_whitespace(stripped[3:])
         if ";" in version or ")" in version or contains_whitespace(version):
@@ -126,11 +126,16 @@ def match_specifier_token(s):
     This is an unanchored match of `Specifier._specifier_regex_str` (without
     surrounding whitespace), so it never looks past the end of the token.
 
+    The token grammar is the specifier grammar, so the parsed specifier is
+    returned along with the token's length.
+
     Args:
         s: The string to match.
 
     Returns:
-        The length of the token, or 0 if `s` doesn't start with a specifier.
+        `(length, spec)`: the length of the token and the specifier struct
+        (see `parse_specifier`), or `(0, None)` if `s` doesn't start with a
+        specifier.
     """
     if s.startswith("==="):
         # ===\s*[^\s;)]*
@@ -140,21 +145,22 @@ def match_specifier_token(s):
             if rest[end] in ";)" or whitespace_len_at(rest, end):
                 break
             end += 1
-        return len(s) - len(rest) + end
+        spec = struct(operator = "===", version = rest[:end], parsed_version = None)
+        return len(s) - len(rest) + end, spec
 
     for op in _TOKEN_OPERATORS:
         if s.startswith(op):
             rest = lstrip_whitespace(s[len(op):])
             if op == "==" or op == "!=":
-                n = match_version_prefix(rest, allow_local = True, allow_wildcard = True)
+                n, v = scan_version_prefix(rest, allow_local = True, allow_wildcard = True)
             elif op == "~=":
-                n = match_version_prefix(rest, allow_local = False, min_release_len = 2)
+                n, v = scan_version_prefix(rest, allow_local = False, min_release_len = 2)
             else:
-                n = match_version_prefix(rest, allow_local = False)
+                n, v = scan_version_prefix(rest, allow_local = False)
             if not n:
-                return 0
-            return len(s) - len(rest) + n
-    return 0
+                return 0, None
+            return len(s) - len(rest) + n, struct(operator = op, version = rest[:n], parsed_version = v)
+    return 0, None
 
 def _spec_version(spec):
     """Returns the parsed version of a non-=== specifier."""

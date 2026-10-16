@@ -264,6 +264,13 @@ def lstrip_whitespace(s):
     Returns:
         The string without leading ASCII or UTF-8 encoded Unicode whitespace.
     """
+
+    # Fast path: every whitespace character starts with a byte <= " " or
+    # >= "\200".
+    c = s[:1]
+    if c > " " and c < "\200":
+        return s
+    s = s.lstrip(_ASCII_WHITESPACE_CHARS)
     for _ in range(len(s)):
         n = whitespace_len_at(s, 0)
         if not n:
@@ -456,7 +463,7 @@ def _parse_version_full(version_str):
         return None
     return make_version(epoch, release, pre, post, dev, local, version_str)
 
-def match_version_prefix(s, allow_local = True, allow_wildcard = False, min_release_len = 1):
+def scan_version_prefix(s, allow_local = True, allow_wildcard = False, min_release_len = 1):
     """Matches a PEP 440 version at the start of `s`, like an unanchored regex.
 
     Internal helper for the requirement tokenizer; not part of the public API.
@@ -471,18 +478,22 @@ def match_version_prefix(s, allow_local = True, allow_wildcard = False, min_rele
         min_release_len: The minimum number of release segments.
 
     Returns:
-        The length of the match, or 0 if there is none.
+        `(length, version)`: the length of the match and the parsed version
+        (for a `.*` match, the version without the suffix), or `(0, None)` if
+        there is no match.
     """
     m = _scan_release(s.lower())
     if m == None:
-        return 0
-    _epoch, release, rest = m
+        return 0, None
+    epoch, release, rest = m
     if len(release) < min_release_len:
-        return 0
+        return 0, None
     if allow_wildcard and rest.startswith(".*"):
-        return len(s) - len(rest) + 2
-    _pre, _post, _dev, _local, rest = _scan_suffix(rest, allow_local)
-    return len(s) - len(rest)
+        n = len(s) - len(rest)
+        return n + 2, make_version(epoch, release, None, None, None, None, s[:n])
+    pre, post, dev, local, rest = _scan_suffix(rest, allow_local)
+    n = len(s) - len(rest)
+    return n, make_version(epoch, release, pre, post, dev, local, s[:n])
 
 def version_to_string(v):
     """Returns the normalized string form of a parsed version.

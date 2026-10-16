@@ -14,7 +14,7 @@ load(
     "skip_ws",
     "syntax_error",
 )
-load("//pypackaging/private/specifiers:specifiers.bzl", "match_specifier_token", "parse_specifier", "specifiers", "try_parse_specifier")
+load("//pypackaging/private/specifiers:specifiers.bzl", "match_specifier_token", "specifiers")
 load("//pypackaging/private/utils:utils.bzl", "utils")
 load("//pypackaging/private/version:version.bzl", "strip_whitespace")
 
@@ -155,12 +155,12 @@ def _parse(req_str):
         # version_many = (SPECIFIER (WS? COMMA WS? SPECIFIER)*)?
         # (a trailing comma is accepted, like upstream)
         for _ in range(n):
-            token_len = match_specifier_token(src[pos:])
+            token_len, spec = match_specifier_token(src[pos:])
             if not token_len:
                 break
             token_start = pos
             pos += token_len
-            specs.append(src[token_start:pos])
+            specs.append(spec)
             if src.startswith(".*", pos):
                 syntax_error(ctx, ".* suffix can only be used with `==` or `!=` operators", token_start, pos + 1)
             if src.startswith("+", pos) and src[pos + 1:pos + 2] and src[pos + 1] in _LOCAL_LABEL_START:
@@ -262,18 +262,17 @@ def _parse_requirement(req_str):
         req_str = strip_whitespace(req_str),
     )
 
-def _specifier_set(tokens):
-    """Builds a specifier set struct (see `specifiers.parse_set`) from tokens."""
-    specs = []
-    for token in tokens:
-        if "," in token:
-            # Only an `===` token can contain a comma. Like upstream, the
-            # joined string is split on commas, which fails here.
-            return specifiers.parse_set(",".join(tokens))
-        spec = try_parse_specifier(token)
-        if spec == None:
-            spec = parse_specifier(token)  # Fails with the usual message.
-        specs.append(spec)
+def _specifier_set(specs):
+    """Builds a specifier set struct (see `specifiers.parse_set`).
+
+    Args:
+        specs: The specifier structs matched by the tokenizer.
+    """
+    for spec in specs:
+        if "," in spec.version:
+            # Only an `===` version can contain a comma. Upstream joins the
+            # specifiers and splits the result on commas, which fails here.
+            return specifiers.parse_set(",".join([s.operator + s.version for s in specs]))
     return struct(specs = specs)
 
 def _spec_str(spec):
