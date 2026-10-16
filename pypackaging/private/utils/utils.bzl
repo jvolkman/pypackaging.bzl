@@ -12,20 +12,43 @@ _DIGITS = "0123456789"
 _VALID_NORMALIZED_START = _LOWER + _DIGITS
 _VALID_NORMALIZED_CHAR = _VALID_NORMALIZED_START + "-"
 _VALID_WHEEL_NAME_CHARS = _LOWER + _UPPER + _DIGITS + "._"
+_VALID_NAME_START = _LOWER + _UPPER + _DIGITS
+_VALID_NAME_CHAR = _VALID_NAME_START + "._-"
+
+def _is_valid_name(name):
+    # Equivalent to packaging's
+    # re.fullmatch(r"[a-z0-9]|[a-z0-9][a-z0-9._-]*[a-z0-9]", name, re.I | re.A).
+    if not name:
+        return False
+    if name[0] not in _VALID_NAME_START or name[-1] not in _VALID_NAME_START:
+        return False
+
+    # buildifier: disable=string-iteration
+    for c in name.elems():
+        if c not in _VALID_NAME_CHAR:
+            return False
+    return True
 
 def canonicalize_name(name, validate = False):
     """Takes a valid Python package or extra name, and returns the normalized form of it.
 
+    Lowercases the name and replaces runs of `-`, `_` and `.` with a single `-`
+    (PEP 503). Starlark's `lower()` only lowercases ASCII letters, so unlike
+    packaging, non-ASCII letters are left unchanged. Valid distribution names
+    are ASCII-only, so this only matters when `validate` is False.
+
     Args:
         name: The name to normalize.
-        validate: Whether to validate the name.
+        validate: If True, `fail()` unless `name` is a valid distribution name
+            per the core metadata spec (ASCII letters and digits, with `.`,
+            `_` and `-` allowed except at the start and end), like packaging
+            raising `InvalidName`.
 
     Returns:
         The normalized name.
     """
-    if validate:
-        # Upstream validation uses: ^[a-z0-9]|[a-z0-9][a-z0-9._-]*[a-z0-9]$ (case-insensitive)
-        pass
+    if validate and not _is_valid_name(name):
+        fail("name is invalid: {}".format(repr(name)))
 
     value = name.lower().replace("_", "-").replace(".", "-")
 
