@@ -317,9 +317,88 @@ def _test_marker_aliases(name):
     util.helper_target(native.filegroup, name = name + "_subject")
     analysis_test(name = name, target = name + "_subject", impl = _test_marker_aliases_impl)
 
+def _test_marker_string_literals_impl(env, _target):
+    # Quoted strings are decoded like Python string literals (ast.literal_eval).
+    env.expect.that_bool(_eval("os_name == 'po\\x73ix'")).equals(True)
+    env.expect.that_bool(_eval("os_name == 'p\\u006fsix'")).equals(True)
+    env.expect.that_bool(_eval("os_name == 'p\\U0000006fsix'")).equals(True)
+    env.expect.that_bool(_eval("os_name == '\\160osix'")).equals(True)
+    env.expect.that_bool(_eval("os_name == 'po\\\nsix'")).equals(True)
+    env.expect.that_bool(_eval("os_name == '\\u00e9'", os_name = "\303\251")).equals(True)
+    env.expect.that_bool(_eval("os_name == '\\xe9'", os_name = "\303\251")).equals(True)
+    env.expect.that_bool(_eval("os_name == '\303\251'", os_name = "\303\251")).equals(True)
+    env.expect.that_bool(_eval("os_name == '\\U0001F600'", os_name = "\360\237\230\200")).equals(True)
+    env.expect.that_str(markers.parse("os_name == 'a\\\\b'")[0][2].value).equals("a\\b")
+    env.expect.that_str(markers.parse("os_name == \"a\\'b\"")[0][2].value).equals("a'b")
+    env.expect.that_str(markers.parse("os_name == 'a\\tb\\n'")[0][2].value).equals("a\tb\n")
+
+    # Unknown escapes are kept verbatim.
+    env.expect.that_str(markers.parse("os_name == '\\q\\8'")[0][2].value).equals("\\q\\8")
+
+def _test_marker_string_literals(name):
+    util.helper_target(native.filegroup, name = name + "_subject")
+    analysis_test(name = name, target = name + "_subject", impl = _test_marker_string_literals_impl)
+
+def _test_marker_grammar_impl(env, _target):
+    # The empty string is accepted (always true); upstream rejects it.
+    env.expect.that_collection(markers.parse("")).has_size(0)
+    env.expect.that_bool(markers.evaluate([], {})).equals(True)
+
+    # Surrounding whitespace and a single trailing newline (regex `$`).
+    env.expect.that_bool(_eval(" \tos_name == 'posix' \t")).equals(True)
+    env.expect.that_bool(_eval("os_name == 'posix'\n")).equals(True)
+
+    # No whitespace is needed around quoted strings or parentheses.
+    env.expect.that_bool(_eval("os_name=='nt'or(os_name=='posix')")).equals(True)
+    env.expect.that_bool(_eval("'po'in os_name")).equals(True)
+    env.expect.that_bool(_eval("'z' not\tin os_name")).equals(True)
+
+    # Deep nesting and long inputs.
+    env.expect.that_bool(_eval("(" * 500 + "os_name == 'posix'" + ")" * 500)).equals(True)
+    env.expect.that_bool(_eval(" and ".join(["os_name == 'posix'"] * 3000))).equals(True)
+
+    # Extra values are normalized at every nesting level (upstream only does
+    # this at the top level).
+    env.expect.that_bool(_eval("os_name == 'nt' or (extra == 'Foo_Bar')", extra = "foo-bar")).equals(True)
+    m = markers.parse("(extra == 'Foo_Bar')")
+    env.expect.that_str(m[0][0][2].value).equals("foo-bar")
+
+def _test_marker_grammar(name):
+    util.helper_target(native.filegroup, name = name + "_subject")
+    analysis_test(name = name, target = name + "_subject", impl = _test_marker_grammar_impl)
+
 # Failure cases: (marker, environment overrides or None to only parse, expected
 # message fragments).
 _FAILURES = [
+    # Dangling boolean operators and other grammar holes.
+    ("os_name == 'nt' or", None, ["Invalid marker: Expected a marker variable or quoted string", "    os_name == 'nt' or\n                      ^"]),
+    ("os_name == 'nt' and", None, ["Expected a marker variable or quoted string"]),
+    ("(os_name == 'nt' or)", None, ["Expected a marker variable or quoted string"]),
+    ("and os_name == 'nt'", None, ["Expected a marker variable or quoted string"]),
+    ("()", None, ["Expected a marker variable or quoted string"]),
+    (" ", None, ["Expected a marker variable or quoted string"]),
+    ("\t", None, ["Expected a marker variable or quoted string"]),
+    ("os_name == 'posix'\n\n", None, ["Expected end of marker expression"]),
+    ("\nos_name == 'posix'", None, ["Expected a marker variable or quoted string"]),
+    ("os_name == 'posix';", None, ["Expected end of marker expression"]),
+    ("os_name == 'a')", None, ["Expected end of marker expression", "    os_name == 'a')\n                  ^"]),
+    ("(os_name == 'a'", None, ["Expected matching RIGHT_PARENTHESIS for LEFT_PARENTHESIS, after marker expression", "    (os_name == 'a'\n    ~~~~~~~~~~~~~~~^"]),
+    ("os_name ~ 'a'", None, ["Expected marker operator, one of <=, <, !=, ==, >=, >, ~=, ===, in, not in", "    os_name ~ 'a'\n            ^"]),
+    ("os_name notin 'a'", None, ["Expected marker operator"]),
+    ("os_name not'a'", None, ["Expected whitespace after 'not'"]),
+    ("os_name not  is 'a'", None, ["Expected 'in' after 'not'"]),
+    ("os_name == 'a'andos_name == 'b'", None, ["Expected end of marker expression"]),
+    ("platform.release == ''", None, ["Expected a marker variable or quoted string"]),
+    ("os_namex == 'a'", None, ["Expected a marker variable or quoted string"]),
+    ("os_name == 'a", None, ["Expected a marker variable or quoted string"]),
+    # String literals that `ast.literal_eval` rejects.
+    ("os_name == '\\'", None, ["Invalid string literal"]),
+    ("os_name == 'a\\'", None, ["Invalid string literal"]),
+    ("os_name == 'a\nb'", None, ["Invalid string literal"]),
+    ("os_name == '\\x4'", None, ["truncated \\x escape"]),
+    ("os_name == '\\u12'", None, ["truncated \\u escape"]),
+    ("os_name == '\\U00110000'", None, ["illegal Unicode character"]),
+    ("os_name == '\\N{LATIN SMALL LETTER A}'", None, ["\\N{...} escapes are not supported"]),
     # Undefined comparisons on non-version keys.
     ("sys_platform ~= 'linux'", {}, ["Undefined comparison", "sys_platform ~= \"linux\""]),
     ("sys_platform === 'linux'", {}, ["Undefined comparison"]),
@@ -414,6 +493,8 @@ def markers_test_suite(name):
             _test_string_operator_table,
             _test_list_valued_extra,
             _test_marker_aliases,
+            _test_marker_string_literals,
+            _test_marker_grammar,
         ],
     )
 
