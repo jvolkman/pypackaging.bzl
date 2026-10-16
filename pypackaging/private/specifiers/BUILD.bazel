@@ -10,8 +10,5 @@ package(default_visibility = [
 bzl_library(
     name = "specifiers",
     srcs = ["specifiers.bzl"],
-    deps = [
-        "//pypackaging/private/version",
-        "@re.bzl//:re",
-    ],
+    deps = ["//pypackaging/private/version"],
 )

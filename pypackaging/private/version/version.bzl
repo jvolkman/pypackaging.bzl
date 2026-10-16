@@ -4,50 +4,34 @@ Derived from pypa/packaging: packaging/version.py (Apache 2.0 / BSD).
 Baseline: pypa/packaging 26.2
 """
 
-load("@re.bzl", "re")
-
 def _fail_invalid_version(version):
     fail("Invalid version: {}".format(version))
 
-# Simplified pattern for Starlark and re.bzl
-_VERSION_PATTERN = r"""
-    v?
-    (?:
-        (?:(?P<epoch>[0-9]+)!)?
-        (?P<release>[0-9]+(?:\.[0-9]+)*)
-        (?P<pre>
-            [._-]?
-            (?P<pre_l>alpha|a|beta|b|preview|pre|c|rc)
-            [._-]?
-            (?P<pre_n>[0-9]+)?
-        )?
-        (?P<post>
-            (?:-(?P<post_n1>[0-9]+))
-            |
-            (?:
-                [._-]?
-                (?P<post_l>post|rev|r)
-                [._-]?
-                (?P<post_n2>[0-9]+)?
-            )
-        )?
-        (?P<dev>
-            [._-]?
-            (?P<dev_l>dev)
-            [._-]?
-            (?P<dev_n>[0-9]+)?
-        )?
-    )
-    (?:[+]
-        (?P<local>
-            [a-z0-9]+
-            (?:[._-][a-z0-9]+)*
-        )
-    )?
-"""
+# Versions are parsed by hand rather than with a regex: it is much faster in
+# Starlark. The accepted grammar is packaging's VERSION_PATTERN, matched
+# case-insensitively against the whole (stripped) string:
+#
+#   v?
+#   (?:[0-9]+!)?                                       epoch
+#   [0-9]+(?:\.[0-9]+)*                                release
+#   (?:[._-]?(?:alpha|a|beta|b|preview|pre|c|rc)[._-]?[0-9]*)?          pre
+#   (?:-[0-9]+|[._-]?(?:post|rev|r)[._-]?[0-9]*)?                       post
+#   (?:[._-]?dev[._-]?[0-9]*)?                                          dev
+#   (?:\+[a-z0-9]+(?:[._-][a-z0-9]+)*)?                                 local
+#
+# Taking every optional part greedily (and the longest label) gives the same
+# result as the backtracking regex: no label is a prefix of a label that can
+# follow it, and a separator consumed by one part is never required by the
+# next one (a separator followed by digits is always taken as the number).
 
-# Pre-compile regex
-_VERSION_RE = re.compile(_VERSION_PATTERN, re.X | re.I)
+_DIGITS = "0123456789"
+_LOCAL_CHARS = "abcdefghijklmnopqrstuvwxyz0123456789"
+_SEPARATORS = (".", "_", "-")
+
+# Longest labels first.
+_PRE_LABELS = ("alpha", "a", "beta", "b", "preview", "pre", "c", "rc")
+_POST_LABELS = ("post", "rev", "r")
+_DEV_LABELS = ("dev",)
 
 # Sort ranks for pre-release: dev-only < a < b < rc < stable (no pre-release).
 _PRE_RANK = {"a": 0, "b": 1, "rc": 2}
@@ -103,40 +87,13 @@ def _cmpkey(epoch, release, pre, post, dev, local):
 
     return (epoch, trimmed, suffix, tuple(cmp_local))
 
-_LETTER_NORMALIZATION = {
+_PRE_NORMALIZATION = {
     "alpha": "a",
     "beta": "b",
     "c": "rc",
     "pre": "rc",
     "preview": "rc",
-    "rev": "post",
-    "r": "post",
 }
-
-def _parse_letter_version(letter, number):
-    if letter:
-        letter = letter.lower()
-        letter = _LETTER_NORMALIZATION.get(letter, letter)
-        return (letter, int(number) if number else 0)
-    if number:
-        return ("post", int(number))
-    return None
-
-def _parse_local_version(local):
-    if local == None:
-        return None
-
-    # Normalize separators to '.'
-    normalized = local.replace("_", ".").replace("-", ".")
-    parts = normalized.split(".")
-
-    result = []
-    for part in parts:
-        if part.isdigit():
-            result.append(int(part))
-        else:
-            result.append(part.lower())
-    return tuple(result)
 
 def get_public_key(v):
     """Returns the comparison key for the public version (without local segment)."""
@@ -302,34 +259,96 @@ def parse_stripped_version(version_str):
         release = tuple([int(p) for p in parts])
         return make_version(0, release, None, None, None, None, version_str)
 
-    m = _VERSION_RE.fullmatch(version_str)
-    if not m:
+    return _parse_version_full(version_str)
+
+def _split_digits(s):
+    """Splits `s` into its leading ASCII digits and the rest."""
+    rest = s.lstrip(_DIGITS)
+    return s[:len(s) - len(rest)], rest
+
+def _take_label(s, labels):
+    """Matches `[._-]?label` at the start of `s`.
+
+    Returns:
+        (label, rest), or (None, s) if no label matches.
+    """
+    t = s[1:] if s.startswith(_SEPARATORS) else s
+    for label in labels:
+        if t.startswith(label):
+            return label, t[len(label):]
+    return None, s
+
+def _take_number(s):
+    """Matches `[._-]?[0-9]*` at the start of `s`.
+
+    Returns:
+        (number or None, rest).
+    """
+    t = s[1:] if s.startswith(_SEPARATORS) else s
+    digits, rest = _split_digits(t)
+    if digits:
+        return int(digits), rest
+    return None, t
+
+def _parse_version_full(version_str):
+    s = version_str.lower()
+    if s.startswith("v"):
+        s = s[1:]
+
+    digits, s = _split_digits(s)
+    if not digits:
+        return None
+    epoch = 0
+    if s.startswith("!"):
+        epoch = int(digits)
+        digits, s = _split_digits(s[1:])
+        if not digits:
+            return None
+
+    release = [int(digits)]
+    for _ in range(len(s)):
+        if not s.startswith(".") or not s[1:2] or s[1:2] not in _DIGITS:
+            break
+        digits, s = _split_digits(s[1:])
+        release.append(int(digits))
+
+    pre = None
+    label, s = _take_label(s, _PRE_LABELS)
+    if label != None:
+        number, s = _take_number(s)
+        pre = (_PRE_NORMALIZATION.get(label, label), number or 0)
+
+    post = None
+    if s.startswith("-") and s[1:2] and s[1:2] in _DIGITS:
+        digits, s = _split_digits(s[1:])
+        post = ("post", int(digits))
+    else:
+        label, s = _take_label(s, _POST_LABELS)
+        if label != None:
+            number, s = _take_number(s)
+            post = ("post", number or 0)
+
+    dev = None
+    label, s = _take_label(s, _DEV_LABELS)
+    if label != None:
+        number, s = _take_number(s)
+        dev = ("dev", number or 0)
+
+    local = None
+    if s.startswith("+"):
+        parts = s[1:].replace("_", ".").replace("-", ".").split(".")
+        local = []
+        for part in parts:
+            if not part or part.lstrip(_LOCAL_CHARS):
+                return None
+            local.append(int(part) if not part.lstrip(_DIGITS) else part)
+        local = tuple(local)
+        s = ""
+
+    if s:
         return None
 
-    epoch_str = m.group("epoch")
-    epoch = int(epoch_str) if epoch_str else 0
-
-    release_str = m.group("release")
-    release = tuple([int(p) for p in release_str.split(".")])
-
-    pre_l = m.group("pre_l")
-    pre_n = m.group("pre_n")
-    pre = _parse_letter_version(pre_l, pre_n)
-
-    post_l = m.group("post_l")
-    post_n1 = m.group("post_n1")
-    post_n2 = m.group("post_n2")
-    post_n = post_n1 if post_n1 else post_n2
-    post = _parse_letter_version(post_l, post_n)
-
-    dev_l = m.group("dev_l")
-    dev_n = m.group("dev_n")
-    dev = _parse_letter_version(dev_l, dev_n)
-
-    local_str = m.group("local")
-    local = _parse_local_version(local_str)
-
-    return make_version(epoch, release, pre, post, dev, local, version_str)
+    return make_version(epoch, tuple(release), pre, post, dev, local, version_str)
 
 def version_to_string(v):
     """Returns the normalized string form of a parsed version.

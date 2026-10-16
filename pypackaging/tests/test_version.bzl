@@ -227,6 +227,28 @@ def _test_version_to_string_impl(env, _target):
         ("1.0.0.post0.dev0", "1.0.0.post0.dev0"),
         ("1.0+abc.007x", "1.0+abc.007x"),
         (" 2.0B1_dev ", "2.0b1.dev0"),
+        # Optional separators and implicit numbers.
+        ("1.0a-1", "1.0a1"),
+        ("1.0.post.dev1", "1.0.post0.dev1"),
+        ("1.0post", "1.0.post0"),
+        ("1.0-r", "1.0.post0"),
+        ("1.0a.post.1", "1.0a0.post1"),
+        ("1.0.dev.1", "1.0.dev1"),
+        ("1.0-dev-1", "1.0.dev1"),
+        ("1.0a-", "1.0a0"),
+        ("1.0a--1", "1.0a0.post1"),
+        ("1.0a-post1", "1.0a0.post1"),
+        ("1.0rev", "1.0.post0"),
+        ("1.0preview1", "1.0rc1"),
+        ("1.0aLpHa", "1.0a0"),
+        ("1.0-1dev", "1.0.post1.dev0"),
+        ("1.0a1-1", "1.0a1.post1"),
+        ("1.0+a_b-c.d", "1.0+a.b.c.d"),
+        ("V1!2", "1!2"),
+        ("v0!0.0", "0.0"),
+        ("1.0c", "1.0rc0"),
+        ("1.0.r.1", "1.0.post1"),
+        ("1.0-c1", "1.0rc1"),
     ]:
         env.expect.that_str(version.to_string(version.parse(s))).equals(expected)
 
@@ -270,6 +292,21 @@ _INVALID_VERSIONS = [
     "1.0+",
     "1!2!3",
     "foo",
+    "1.0re",
+    "1.0previe1",
+    "1.0.-1",
+    "1.0-1-1",
+    "1.0--1",
+    "1.0+-a",
+    "1.0+a-",
+    "1.0d",
+    "1e5",
+    "1.0.post1-1",
+    "1.0a1a1",
+    "1!",
+    "1.",
+    "1.0+\303\251",
+    "\331\241.0",  # ARABIC-INDIC DIGIT ONE
 ]
 
 def version_test_suite(name):

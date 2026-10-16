@@ -10,7 +10,4 @@ package(default_visibility = [
 bzl_library(
     name = "version",
     srcs = ["version.bzl"],
-    deps = [
-        "@re.bzl//:re",
-    ],
 )
