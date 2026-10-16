@@ -275,7 +275,6 @@ def _test_list_valued_extra_impl(env, _target):
     env.expect.that_bool(_eval("extra == 'foo-bar'", extra = active)).equals(True)
     env.expect.that_bool(_eval("extra == 'FOO_bar'", extra = active)).equals(True)
     env.expect.that_bool(_eval("'Baz' == extra", extra = active)).equals(True)
-    env.expect.that_bool(_eval("extra === 'baz'", extra = active)).equals(True)
     env.expect.that_bool(_eval("extra == 'x'", extra = active)).equals(False)
     env.expect.that_bool(_eval("extra != 'x'", extra = active)).equals(True)
     env.expect.that_bool(_eval("extra != 'baz'", extra = active)).equals(False)
@@ -348,6 +347,11 @@ def _test_marker_string_literals(name):
 def _test_marker_grammar_impl(env, _target):
     # The empty string is accepted (always true); upstream rejects it.
     env.expect.that_collection(markers.parse("")).has_size(0)
+
+    # Whitespace-only input is treated like "" (upstream rejects both).
+    for s in [" ", "\t", "\n", " \t\r\n", "\302\240"]:
+        env.expect.where(marker = s).that_collection(markers.parse(s)).has_size(0)
+        env.expect.where(marker = s).that_bool(markers.evaluate(markers.parse(s), {})).equals(True)
     env.expect.that_bool(markers.evaluate([], {})).equals(True)
 
     # Surrounding whitespace and a single trailing newline (regex `$`).
@@ -405,8 +409,6 @@ _FAILURES = [
     ("(os_name == 'nt' or)", None, ["Expected a marker variable or quoted string"]),
     ("and os_name == 'nt'", None, ["Expected a marker variable or quoted string"]),
     ("()", None, ["Expected a marker variable or quoted string"]),
-    (" ", None, ["Expected a marker variable or quoted string"]),
-    ("\t", None, ["Expected a marker variable or quoted string"]),
     ("os_name == 'posix'\n\n", None, ["Expected end of marker expression"]),
     ("\nos_name == 'posix'", None, ["Expected a marker variable or quoted string"]),
     ("os_name == 'posix';", None, ["Expected end of marker expression"]),
@@ -444,6 +446,7 @@ _FAILURES = [
     ("extra < 'z'", {"extra": ["foo"]}, ["Operator '<' is not supported"]),
     ("extra ~= 'z'", {"extra": ("foo",)}, ["Operator '~=' is not supported"]),
     ("extra >= 'z'", {"extra": []}, ["Operator '>=' is not supported"]),
+    ("extra === 'foo'", {"extra": ["foo"]}, ["Operator '===' is not supported", "only == and != are"]),
     # Bad environment value types.
     ("extra == 'a'", {"extra": 1}, ["must be a string or a list/tuple of strings"]),
     ("extra == 'a'", {"extra": ["a", 1]}, ["must be a string or a list/tuple of strings"]),

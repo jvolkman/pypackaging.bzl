@@ -7,6 +7,7 @@ Baseline: pypa/packaging 26.2
 
 load("//pypackaging/private/specifiers:specifiers.bzl", "specifier_contains", "try_parse_specifier")
 load("//pypackaging/private/utils:utils.bzl", "utils")
+load("//pypackaging/private/version:version.bzl", "strip_whitespace")
 
 visibility(["//", "//pypackaging/..."])
 
@@ -49,13 +50,24 @@ _VARIABLES = (
 # Longest first.
 _OPS = ("===", "==", "~=", "!=", "<=", ">=", "<", ">")
 
-def _is_word_char(c):
+def is_word_char(c):
+    """Returns True if `c` counts as a regex word character (`\\w`).
+
+    Any non-ASCII character is treated as a word character. Internal helper
+    shared with requirements.bzl; not part of the public API.
+
+    Args:
+        c: A single character.
+
+    Returns:
+        True for ASCII letters, digits, "_" and any non-ASCII character.
+    """
     return c in _ASCII_WORD_CHARS or c >= "\200"
 
 def _is_boundary(src, pos):
     """Returns True if `pos` is a regex `\\b` word boundary in `src`."""
-    before = pos > 0 and _is_word_char(src[pos - 1])
-    after = pos < len(src) and _is_word_char(src[pos])
+    before = pos > 0 and is_word_char(src[pos - 1])
+    after = pos < len(src) and is_word_char(src[pos])
     return before != after
 
 def _match_word(src, pos, word):
@@ -383,8 +395,8 @@ def parse_marker(marker_str):
     is an alias for `platform_python_implementation`, and the value compared
     against `extra` is normalized (PEP 685) at every nesting level.
 
-    Unlike upstream, the empty string is accepted and returns `[]`, which
-    `evaluate` treats as always true. Whitespace-only input is rejected.
+    Unlike upstream, an empty or whitespace-only string is accepted and
+    returns `[]`, which `evaluate` treats as always true.
 
     Invalid input fails with an upstream-style message that shows the marker
     and a caret at the error position.
@@ -399,7 +411,7 @@ def parse_marker(marker_str):
         "in" or "not in"; boolean operators are the strings "and"/"or"; and
         parenthesized groups are nested lists.
     """
-    if marker_str == "":
+    if not strip_whitespace(marker_str):
         return []
     ctx = struct(src = marker_str, label = "Invalid marker")
     tree, pos = parse_marker_expression(ctx, 0)
@@ -427,9 +439,12 @@ def marker_to_string(markers):
     always double-quoted (without escaping, like upstream). Redundant
     parentheses around a whole group are dropped.
 
-    Divergence: upstream also drops the parentheses of a doubly parenthesized
+    Divergences: upstream also drops the parentheses of a doubly parenthesized
     nested group, e.g. `a and ((b or c))` becomes `a and b or c`, which changes
-    the meaning. This implementation keeps them: `a and (b or c)`.
+    the meaning. This implementation keeps them: `a and (b or c)`. And since
+    `parse` normalizes the value compared with `extra` at every nesting level,
+    `(extra == 'Foo_Bar')` is written as `(extra == "foo-bar")`, where upstream
+    keeps `"Foo_Bar"`.
 
     Args:
         markers: A parsed marker tree (from `parse`).
@@ -528,11 +543,11 @@ def _eval_item(item, environment):
     # active extras (already normalized by `_prepare_environment`).
     if key == "extra" and type(env_val) in ("list", "tuple"):
         value = rhs_val if lhs.type == "variable" else lhs_val
-        if op == "==" or op == "===":
+        if op == "==":
             return value in env_val
         if op == "!=":
             return value not in env_val
-        fail("Operator '{}' is not supported when 'extra' is a list of extras (in marker `{}`); only ==, === and != are".format(
+        fail("Operator '{}' is not supported when 'extra' is a list of extras (in marker `{}`); only == and != are".format(
             op,
             _format_item(item),
         ))
@@ -616,7 +631,8 @@ def evaluate_markers(markers, environment):
       `platform_release` are compared as PEP 440 versions when `op + value` is a
       valid specifier (pre-releases always match). If it is not a valid
       specifier, the comparison falls back to the string table below; if the
-      version being tested is not a valid version, the comparison is False. A
+      version being tested is not a valid version, the comparison is False,
+      except for `===`, which compares the strings case-insensitively. A
       `python_full_version` ending in "+" gets "local" appended first.
     - All other comparisons use upstream's string table: `==`, `!=`, `in` and
       `not in` as usual, `<` and `>` are always False, `<=` and `>=` mean
@@ -631,10 +647,10 @@ def evaluate_markers(markers, environment):
 
     Non-standard extension (uv-compatible): `environment["extra"]` may be a
     list or tuple of strings, the set of active extras (uv also uses this for
-    its conflict tokens). Each element is normalized. `extra == X`,
-    `X == extra` and `===` are True iff X is in the set; `!=` is True iff it is
-    not. An empty list therefore makes `==` False and `!=` True. Any other
-    operator with a list-valued `extra` fails.
+    its conflict tokens). Each element is normalized. `extra == X` and
+    `X == extra` are True iff X is in the set; `!=` is True iff it is not. An
+    empty list therefore makes `==` False and `!=` True. Any other operator
+    (including `===`, which fails for a string `extra` too) fails.
 
     Args:
         markers: The parsed marker tree (list), as returned by `parse`. An
