@@ -5,16 +5,9 @@ Baseline: pypa/packaging 26.2
 
 Differences from `packaging.specifiers`:
 
-* `~=` derives its prefix from the normalized specifier version, as PEP 440
-  says: `~=1.0c1` is `>=1.0c1, ==1.*` and `~=v1.0` is `>=1.0, ==1.*`.
-  packaging 26.2 derives it from the raw string, splitting off only labels
-  that start with lowercase `a`, `b`, `rc`, `dev` or `post`. The results
-  differ when the release is directly followed by `c` (`~=1.0c1`), when a
-  `.`-separated label isn't one of those (`~=1.0.r1`, `~=1.0.pre1`,
-  `~=1.0.RC1`, `~=1.0.0c1`), which packaging treats as one more release
-  segment (`==1.0.*`, `==1.0.0.*`), and with a `v`/`V` prefix, where
-  packaging matches nothing. Spellings such as `~=1.0RC1`, `~=1.0-c1` or
-  `~=1.0.post1` give the same results.
+* `~=` derives its prefix from the normalized specifier version per PEP 440
+  (e.g. `~=1.0c1` -> `>=1.0c1, ==1.*` and `~=v1.0` -> `>=1.0, ==1.*`), rather
+  than splitting the raw version string.
 * Specifiers and sets are immutable structs, so there is no constructor-level
   `prereleases` argument; pass `prereleases` to `contains`, `set_contains`,
   `filter` or `set_filter` instead, which gives the same results.

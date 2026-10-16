@@ -10,6 +10,9 @@ load("//pypackaging/private/markers:markers.bzl", "markers")
 # buildifier: disable=bzl-visibility
 load("//pypackaging/private/requirements:requirements.bzl", "requirements")
 
+# buildifier: disable=bzl-visibility
+load("//pypackaging/private/utils:utils.bzl", "utils")
+
 def _invalid_requirement_subject_rule_impl(ctx):
     requirements.parse(ctx.attr.req_str)
     return []
@@ -39,15 +42,6 @@ _EQUAL_DEPENDENCIES = [
 
 _EQUIVALENT_DEPENDENCIES = [
     ("scikit-learn==1.0.1", "scikit_learn==1.0.1"),
-    # Trailing-zero-equivalent specifiers compare equal in Python, but in this simplified Starlark port
-    # they do not compare equal as structs because version strings are not normalized in Specifier structs.
-    # ("foo==1.0.0", "foo==1.0.0.0"),
-    # ("foo>=1.0", "foo>=1.0.0"),
-    # (
-    #     'foo[a]==1.0.0; python_version>="3.8"',
-    #     'foo[a]==1.0.0.0; python_version>="3.8"',
-    # ),
-    # Extras that normalize to the same value are equivalent.
     ("urllib3[secure]", "urllib3[SECURE]"),
     ("fishtank[all-blue]", "fishtank[all_blue]"),
     ("fishtank[all-blue]", "fishtank[all---blue]"),
@@ -119,19 +113,20 @@ _MARKERS = [
 
 _WHITESPACES = ["", " ", "\t"]
 
-# (input, expected message): the messages are packaging 26.2's, with our
-# "Invalid requirement: " prefix, except where noted in the generator.
+# (input, expected message): packaging 26.2 error messages with "Invalid requirement: " prefix.
 _INVALID_REQUIREMENTS = [
-    ("", "Invalid requirement: Expected package name at the start of dependency specifier\n    \n    ^"),  # Empty string
-    ("==0.0", "Invalid requirement: Expected package name at the start of dependency specifier\n    ==0.0\n    ^"),  # Missing package name
-    ("name[bar baz]", "Invalid requirement: Expected comma between extra names\n    name[bar baz]\n             ^"),  # Missing comma in extras
-    ("name[bar, baz,]", "Invalid requirement: Expected extra name after comma\n    name[bar, baz,]\n                  ^"),  # Trailing comma in extras
-    ("name (>= 1.0", "Invalid requirement: Expected matching RIGHT_PARENTHESIS for LEFT_PARENTHESIS, after version specifier\n    name (>= 1.0\n         ~~~~~~~^"),  # Unclosed parenthesis in specifier
-    ("name[bar, baz >= 1.0", "Invalid requirement: Expected matching RIGHT_BRACKET for LEFT_BRACKET, after extras\n    name[bar, baz >= 1.0\n        ~~~~~~~~~~^"),  # Unclosed bracket
-    ("name[bar, baz", "Invalid requirement: Expected matching RIGHT_BRACKET for LEFT_BRACKET, after extras\n    name[bar, baz\n        ~~~~~~~~~^"),  # Unclosed bracket
-    ("name @ https://example.com/; extra == 'example'", "Invalid requirement: Expected semicolon (after URL and whitespace) or end\n    name @ https://example.com/; extra == 'example'\n           ~~~~~~~~~~~~~~~~~~~~~~^"),  # No space before URL marker (upstream rejects this)
-    ("name; (extra == 'example'", "Invalid requirement: Expected matching RIGHT_PARENTHESIS for LEFT_PARENTHESIS, after marker expression\n    name; (extra == 'example'\n          ~~~~~~~~~~~~~~~~~~~^"),  # Unclosed parenthesis in marker
-    ("name @ ", "Invalid requirement: Expected URL after @\n    name @ \n           ^"),  # Missing URL after @
+    ("", "Invalid requirement: Expected package name at the start of dependency specifier\n    \n    ^"),
+    (" ", "Invalid requirement: Expected package name at the start of dependency specifier\n     \n     ^"),
+    ("==0.0", "Invalid requirement: Expected package name at the start of dependency specifier\n    ==0.0\n    ^"),
+    ("name[bar baz]", "Invalid requirement: Expected comma between extra names\n    name[bar baz]\n             ^"),
+    ("name[bar, baz,]", "Invalid requirement: Expected extra name after comma\n    name[bar, baz,]\n                  ^"),
+    ("name (>= 1.0", "Invalid requirement: Expected matching RIGHT_PARENTHESIS for LEFT_PARENTHESIS, after version specifier\n    name (>= 1.0\n         ~~~~~~~^"),
+    ("name[bar, baz >= 1.0", "Invalid requirement: Expected matching RIGHT_BRACKET for LEFT_BRACKET, after extras\n    name[bar, baz >= 1.0\n        ~~~~~~~~~~^"),
+    ("name[bar, baz", "Invalid requirement: Expected matching RIGHT_BRACKET for LEFT_BRACKET, after extras\n    name[bar, baz\n        ~~~~~~~~~^"),
+    ("name @ https://example.com/; extra == 'example'", "Invalid requirement: Expected semicolon (after URL and whitespace) or end\n    name @ https://example.com/; extra == 'example'\n           ~~~~~~~~~~~~~~~~~~~~~~^"),
+    ("name @ file:///a b", "Invalid requirement: Expected semicolon (after URL and whitespace) or end\n    name @ file:///a b\n           ~~~~~~~~~~^"),
+    ("name; (extra == 'example'", "Invalid requirement: Expected matching RIGHT_PARENTHESIS for LEFT_PARENTHESIS, after marker expression\n    name; (extra == 'example'\n          ~~~~~~~~~~~~~~~~~~~^"),
+    ("name @ ", "Invalid requirement: Expected URL after @\n    name @ \n           ^"),
     # Invalid names.
     ("-foo", "Invalid requirement: Expected package name at the start of dependency specifier\n    -foo\n    ^"),
     ("foo-", "Invalid requirement: Expected semicolon (after name with no version specifier) or end\n    foo-\n       ^"),
@@ -200,8 +195,12 @@ _INVALID_REQUIREMENTS = [
     ("foo; os_name == 'nt' or", "Invalid requirement: Expected a marker variable or quoted string\n    foo; os_name == 'nt' or\n                           ^"),
     ("foo>=1.0; os_name=='nt' and", "Invalid requirement: Expected a marker variable or quoted string\n    foo>=1.0; os_name=='nt' and\n                               ^"),
     ("foo; os_name == 'nt'; x", "Invalid requirement: Expected end of dependency specifier\n    foo; os_name == 'nt'; x\n                        ^"),
+    ("foo; os_name == 'nt' xx", "Invalid requirement: Expected end of dependency specifier\n    foo; os_name == 'nt' xx\n                         ^"),
     ("foo; os_name == '\\'", "Invalid string literal (the closing quote is escaped)"),
     ("foo; bogus == 'x'", "Invalid requirement: Expected a marker variable or quoted string\n    foo; bogus == 'x'\n         ^"),
+    ("foo; os_name == '\303\251' and", "Invalid requirement: Expected a marker variable or quoted string\n    foo; os_name == '\303\251' and\n" + " " * 27 + "^"),
+    # Caret position counts code points, not UTF-8 bytes.
+    ("foo; os_name == '\303\251\342\202\254' xx", "Invalid requirement: Expected end of dependency specifier\n    foo; os_name == '\303\251\342\202\254' xx\n" + " " * 25 + "^"),
 ]
 
 def _test_parse_requirement_basic_impl(env, _target):
@@ -226,50 +225,30 @@ def _test_parse_requirement_with_extras(name):
     analysis_test(name = name, target = name + "_subject", impl = _test_parse_requirement_with_extras_impl)
 
 def _test_parse_requirement_equality_impl(env, _target):
-    for dep1, dep2 in _EQUAL_DEPENDENCIES:
+    for dep1, dep2 in _EQUAL_DEPENDENCIES + _EQUIVALENT_DEPENDENCIES:
         req1 = requirements.parse(dep1)
         req2 = requirements.parse(dep2)
 
-        # In Starlark, struct equality checks fields.
-        # We expect them to be identical after parsing/normalization.
         env.expect.that_str(req1.name).equals(req2.name)
         env.expect.that_collection(req1.extras).contains_exactly(req2.extras)
         env.expect.that_bool(req1.url == req2.url).equals(True)
-
-        # Specifiers might not be strictly equal if order matters in specifiers.bzl
-        # But for these tests, order should be same.
         env.expect.that_bool(req1.specifier == req2.specifier).equals(True)
-
-        # Markers should be identical
         env.expect.that_bool(req1.marker == req2.marker).equals(True)
+
+    for dep1, dep2 in _EQUAL_DEPENDENCIES:
+        env.expect.that_str(requirements.to_string(requirements.parse(dep1))).equals(
+            requirements.to_string(requirements.parse(dep2)),
+        )
 
 def _test_parse_requirement_equality(name):
     util.helper_target(native.filegroup, name = name + "_subject")
     analysis_test(name = name, target = name + "_subject", impl = _test_parse_requirement_equality_impl)
-
-def _test_parse_requirement_equivalence_impl(env, _target):
-    for dep1, dep2 in _EQUIVALENT_DEPENDENCIES:
-        req1 = requirements.parse(dep1)
-        req2 = requirements.parse(dep2)
-
-        env.expect.that_str(req1.name).equals(req2.name)
-        env.expect.that_collection(req1.extras).contains_exactly(req2.extras)
-        env.expect.that_bool(req1.url == req2.url).equals(True)
-
-        # These might fail if specifiers are not normalized
-        env.expect.that_bool(req1.specifier == req2.specifier).equals(True)
-        env.expect.that_bool(req1.marker == req2.marker).equals(True)
-
-def _test_parse_requirement_equivalence(name):
-    util.helper_target(native.filegroup, name = name + "_subject")
-    analysis_test(name = name, target = name + "_subject", impl = _test_parse_requirement_equivalence_impl)
 
 def _test_parse_requirement_difference_impl(env, _target):
     for dep1, dep2 in _DIFFERENT_DEPENDENCIES:
         req1 = requirements.parse(dep1)
         req2 = requirements.parse(dep2)
 
-        # We expect them to differ in some way
         is_equal = (
             req1.name == req2.name and
             req1.extras == req2.extras and
@@ -283,9 +262,9 @@ def _test_parse_requirement_difference(name):
     util.helper_target(native.filegroup, name = name + "_subject")
     analysis_test(name = name, target = name + "_subject", impl = _test_parse_requirement_difference_impl)
 
-def _test_parse_requirement_matrix_impl(_env, _target):
-    # This matrix is large (1710 combinations). We run it in a single test to avoid boilerplate overhead.
+def _test_parse_requirement_matrix_impl(env, _target):
     for name in _NAMES:
+        expected_name = utils.canonicalize_name(name)
         for extras in _EXTRAS:
             for url, specifier in _URLS_AND_SPECIFIERS:
                 for marker in _MARKERS:
@@ -293,11 +272,6 @@ def _test_parse_requirement_matrix_impl(_env, _target):
                         parts = [name]
                         if extras:
                             parts.append("[")
-
-                            # Starlark format works like Python's
-
-                            # Need to handle case where extras might have mixed case if we want to test normalization here
-                            # But upstream just uses sorted(extras) as is.
                             parts.append(",".join(["{ws}{e}{ws}".format(ws = ws, e = e) for e in sorted(extras)]))
                             parts.append("]")
 
@@ -306,47 +280,19 @@ def _test_parse_requirement_matrix_impl(_env, _target):
 
                         if url != None:
                             parts.append("@")
-                            parts.append(url)  # Upstream calls format but we don't have placeholders in URLs here
+                            parts.append(url)
 
                         if marker != None:
-                            if url != None:
-                                parts.append(" ;")
-                            else:
-                                parts.append(";")
+                            parts.append(" ;" if url != None else ";")
                             parts.append(marker.replace("{ws}", ws))
 
-                        to_parse = ws.join(parts)
-
-                        # We just want to make sure it parses without failure for now,
-                        # as strict assertions might require more API than we have (e.g. SpecifierSet stringification).
-                        # But we can at least check name and extras.
-
-                        # Some combinations might be invalid? Upstream claims these are BASIC VALID.
-                        requirements.parse(to_parse)
-
-                        # Apply normalization expectations if needed
-                        # Upstream checks normalized name
-                        # env.expect.that_str(req.name).equals(utils.canonicalize_name(name))
-
-                        # If we reach here, it passed parsing.
+                        req = requirements.parse(ws.join(parts))
+                        env.expect.that_str(req.name).equals(expected_name)
+                        env.expect.that_str(req.raw_name).equals(name)
 
 def _test_parse_requirement_matrix(name):
     util.helper_target(native.filegroup, name = name + "_subject")
     analysis_test(name = name, target = name + "_subject", impl = _test_parse_requirement_matrix_impl)
-
-def _test_parse_requirement_empty_string_impl(env, target):
-    env.expect.that_target(target).failures().contains_predicate(matching.contains("Invalid requirement: Expected package name at the start of dependency specifier"))
-
-def _test_parse_requirement_empty_string(name):
-    util.helper_target(_invalid_requirement_subject_rule, name = name + "_subject", req_str = " ")
-    analysis_test(name = name, target = name + "_subject", expect_failure = True, impl = _test_parse_requirement_empty_string_impl)
-
-def _test_parse_requirement_no_name_impl(env, target):
-    env.expect.that_target(target).failures().contains_predicate(matching.contains("Expected package name at the start of dependency specifier\n    ==0.0\n    ^"))
-
-def _test_parse_requirement_no_name(name):
-    util.helper_target(_invalid_requirement_subject_rule, name = name + "_subject", req_str = "==0.0")
-    analysis_test(name = name, target = name + "_subject", expect_failure = True, impl = _test_parse_requirement_no_name_impl)
 
 def _test_parse_requirement_marker_with_at_impl(env, _target):
     req = requirements.parse('requests >= 2.0; extra == "my@extra"')
@@ -507,47 +453,11 @@ def _test_requirement_to_string(name):
     util.helper_target(native.filegroup, name = name + "_subject")
     analysis_test(name = name, target = name + "_subject", impl = _test_requirement_to_string_impl)
 
-_ERROR_MESSAGES = [
-    ("foo==1.0,,<2", "Invalid requirement: Expected comma (within version specifier), semicolon (after version specifier) or end\n    foo==1.0,,<2\n       ~~~~~~^"),
-    ("foo,>=1", "Expected semicolon (after name with no version specifier) or end\n    foo,>=1\n       ^"),
-    ("name @ file:///a b", "Expected semicolon (after URL and whitespace) or end\n    name @ file:///a b\n           ~~~~~~~~~~^"),
-    ("foo[a b]", "Expected comma between extra names\n    foo[a b]\n          ^"),
-    ("foo[a,]", "Expected extra name after comma\n    foo[a,]\n          ^"),
-    ("foo[_a]", "Expected matching RIGHT_BRACKET for LEFT_BRACKET, after extras\n    foo[_a]\n       ~^"),
-    ("foo (>=1", "Expected matching RIGHT_PARENTHESIS for LEFT_PARENTHESIS, after version specifier\n    foo (>=1\n        ~~~~^"),
-    ("foo>=1.*", ".* suffix can only be used with `==` or `!=` operators\n    foo>=1.*\n       ~~~~^"),
-    ("foo>=1.0+abc", "Local version label can only be used with `==` or `!=` operators\n    foo>=1.0+abc\n       ~~~~~^"),
-    ("foo @ ", "Expected URL after @\n    foo @ \n          ^"),
-    ("foo;", "Expected a marker variable or quoted string\n    foo;\n        ^"),
-    ("foo; os_name == 'nt' or", "Expected a marker variable or quoted string\n    foo; os_name == 'nt' or\n                           ^"),
-    ("foo; os_name == 'nt' xx", "Expected end of dependency specifier\n    foo; os_name == 'nt' xx\n                         ^"),
-    ("_foo", "Expected package name at the start of dependency specifier\n    _foo\n    ^"),
-    ("foo; os_name == '\303\251' and", "Invalid requirement: Expected a marker variable or quoted string\n    foo; os_name == '\303\251' and\n" + " " * 27 + "^"),
-    # The caret position counts code points, not UTF-8 bytes.
-    ("foo; os_name == '\303\251\342\202\254' xx", "Expected end of dependency specifier\n    foo; os_name == '\303\251\342\202\254' xx\n" + " " * 25 + "^"),
-]
-
 def _make_error_message_test_impl(message):
     def _impl(env, target):
         env.expect.that_target(target).failures().contains_predicate(matching.contains(message))
 
     return _impl
-
-def _test_parse_requirement_error_messages(name):
-    tests = []
-
-    # buildifier: disable=enumerate
-    for i, (req_str, message) in enumerate(_ERROR_MESSAGES):
-        test_name = "{}_{}".format(name, i)
-        util.helper_target(_invalid_requirement_subject_rule, name = test_name + "_subject", req_str = req_str)
-        analysis_test(
-            name = test_name,
-            target = test_name + "_subject",
-            expect_failure = True,
-            impl = _make_error_message_test_impl(message),
-        )
-        tests.append(test_name)
-    native.test_suite(name = name, tests = [":" + t for t in tests])
 
 def requirements_test_suite(name):
     """Sets up the requirement parsing tests.
@@ -561,18 +471,14 @@ def requirements_test_suite(name):
             _test_parse_requirement_basic,
             _test_parse_requirement_with_extras,
             _test_parse_requirement_equality,
-            _test_parse_requirement_equivalence,
             _test_parse_requirement_difference,
             _test_parse_requirement_matrix,
-            _test_parse_requirement_empty_string,
-            _test_parse_requirement_no_name,
             _test_parse_requirement_marker_with_at,
             _test_parse_requirement_grammar,
             _test_parse_requirement_specifier_tokens,
             _test_parse_requirement_marker_str,
             _test_parse_requirement_raw_names,
             _test_requirement_to_string,
-            _test_parse_requirement_error_messages,
         ],
     )
 

@@ -435,16 +435,9 @@ def _format_item(item):
 def marker_to_string(markers):
     """Serializes a parsed marker tree like upstream `str(Marker)`.
 
-    Variables are emitted in their normalized form and string values are
-    always double-quoted (without escaping, like upstream). Redundant
-    parentheses around a whole group are dropped.
-
-    Divergences: upstream also drops the parentheses of a doubly parenthesized
-    nested group, e.g. `a and ((b or c))` becomes `a and b or c`, which changes
-    the meaning. This implementation keeps them: `a and (b or c)`. And since
-    `parse` normalizes the value compared with `extra` at every nesting level,
-    `(extra == 'Foo_Bar')` is written as `(extra == "foo-bar")`, where upstream
-    keeps `"Foo_Bar"`.
+    Variables and `extra` values are emitted in their normalized form, string
+    values are double-quoted, and redundant outer parentheses around a group
+    are dropped.
 
     Args:
         markers: A parsed marker tree (from `parse`).

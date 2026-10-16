@@ -4,19 +4,7 @@ load("@rules_testing//lib:analysis_test.bzl", "analysis_test", "test_suite")
 load("@rules_testing//lib:util.bzl", "util")
 load("//:pypackaging.bzl", "pypackaging")
 
-# Functions that downstream consumers (e.g. rules_pycross) rely on. Removing or
-# renaming any of these is a breaking change.
-_CONSUMER_CONTRACT = {
-    "markers": ["evaluate", "parse"],
-    "requirements": ["parse"],
-    "specifiers": ["parse_set", "set_contains"],
-    "tags": ["get_supported", "parse_tag"],
-    "utils": ["canonicalize_name", "parse_sdist_filename", "parse_wheel_filename"],
-    "version": ["parse"],
-}
-
-# The complete public API of v0.3.0. Update this (and the changelog) when the
-# API changes.
+# The complete public API of v0.3.0.
 _PUBLIC_API = {
     "markers": ["evaluate", "parse", "to_string"],
     "requirements": ["parse", "to_string"],
@@ -44,41 +32,22 @@ _PUBLIC_API = {
 # Bazel 7 structs also expose the legacy to_json()/to_proto() methods.
 _STRUCT_METHODS = ["to_json", "to_proto"]
 
-def _test_top_level_modules_impl(env, _target):
-    fields = [f for f in dir(pypackaging) if f not in _STRUCT_METHODS]
-    env.expect.that_collection(fields).contains_exactly(
-        sorted(_CONSUMER_CONTRACT.keys()),
-    )
-
-def _test_top_level_modules(name):
-    util.helper_target(native.filegroup, name = name + "_subject")
-    analysis_test(name = name, target = name + "_subject", impl = _test_top_level_modules_impl)
-
-def _test_consumer_contract_impl(env, _target):
-    for module_name, functions in _CONSUMER_CONTRACT.items():
-        module = getattr(pypackaging, module_name)
-        env.expect.where(module = module_name).that_collection(dir(module)).contains_at_least(functions)
-
-def _test_consumer_contract(name):
-    util.helper_target(native.filegroup, name = name + "_subject")
-    analysis_test(name = name, target = name + "_subject", impl = _test_consumer_contract_impl)
+def _fields(s):
+    return [f for f in dir(s) if f not in _STRUCT_METHODS]
 
 def _test_full_public_api_impl(env, _target):
+    env.expect.that_collection(_fields(pypackaging)).contains_exactly(
+        sorted(_PUBLIC_API.keys()),
+    )
     for module_name, functions in _PUBLIC_API.items():
         module = getattr(pypackaging, module_name)
-        fields = [f for f in dir(module) if f not in _STRUCT_METHODS]
-        env.expect.where(module = module_name).that_collection(fields).contains_exactly(functions)
+        env.expect.where(module = module_name).that_collection(_fields(module)).contains_exactly(functions)
 
 def _test_full_public_api(name):
     util.helper_target(native.filegroup, name = name + "_subject")
     analysis_test(name = name, target = name + "_subject", impl = _test_full_public_api_impl)
 
-def _fields(s):
-    return [f for f in dir(s) if f not in _STRUCT_METHODS]
-
 def _test_result_structs_impl(env, _target):
-    # Fields of the structs returned by the public API. Removing or renaming
-    # one is a breaking change.
     p = pypackaging
     cases = [
         ("version.parse", p.version.parse("1.0"), ["dev", "epoch", "is_devrelease", "is_postrelease", "is_prerelease", "key", "local", "post", "pre", "release", "version_str"]),
@@ -98,8 +67,6 @@ def _test_result_structs(name):
     analysis_test(name = name, target = name + "_subject", impl = _test_result_structs_impl)
 
 def _test_keyword_arguments_impl(env, _target):
-    # Every public function called with keyword arguments, so renaming a
-    # parameter fails here.
     p = pypackaging
     v = p.version.parse(version_str = "1.0")
     env.expect.that_bool(p.version.try_parse(version_str = "x") == None).equals(True)
@@ -181,11 +148,9 @@ def public_api_test_suite(name):
     test_suite(
         name = name,
         tests = [
-            _test_consumer_contract,
             _test_full_public_api,
             _test_keyword_arguments,
             _test_readme_examples,
             _test_result_structs,
-            _test_top_level_modules,
         ],
     )
