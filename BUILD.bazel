@@ -5,10 +5,21 @@ load("@package_metadata//rules:package_metadata.bzl", "package_metadata")
 
 package(default_visibility = ["//visibility:public"])
 
+exports_files(["pypackaging.bzl"])
+
+# The public API. Consumers should load("@pypackaging.bzl", "pypackaging") and
+# list this target in the deps of their own bzl_library targets.
 bzl_library(
     name = "pypackaging",
     srcs = ["pypackaging.bzl"],
-    deps = ["//pypackaging"],
+    deps = [
+        "//pypackaging/private/markers",
+        "//pypackaging/private/requirements",
+        "//pypackaging/private/specifiers",
+        "//pypackaging/private/tags",
+        "//pypackaging/private/utils",
+        "//pypackaging/private/version",
+    ],
 )
 
 package_metadata(
