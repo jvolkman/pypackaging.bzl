@@ -13,5 +13,6 @@ bzl_library(
     deps = [
         "//pypackaging/private/specifiers",
         "//pypackaging/private/utils",
+        "@re.bzl//:re",
     ],
 )

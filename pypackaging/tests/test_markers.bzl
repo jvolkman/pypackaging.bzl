@@ -1,10 +1,30 @@
 """Tests for markers.bzl."""
 
 load("@rules_testing//lib:analysis_test.bzl", "analysis_test", "test_suite")
+load("@rules_testing//lib:truth.bzl", "matching")
 load("@rules_testing//lib:util.bzl", "util")
 
 # buildifier: disable=bzl-visibility
 load("//pypackaging/private/markers:markers.bzl", "markers")
+
+_ENV = {
+    "implementation_name": "cpython",
+    "implementation_version": "3.12.4",
+    "os_name": "posix",
+    "platform_machine": "x86_64",
+    "platform_python_implementation": "CPython",
+    "platform_release": "",
+    "platform_system": "Linux",
+    "platform_version": "",
+    "python_full_version": "3.12.4",
+    "python_version": "3.12",
+    "sys_platform": "linux",
+}
+
+def _eval(marker, **overrides):
+    env = dict(_ENV)
+    env.update(overrides)
+    return markers.evaluate(markers.parse(marker), env)
 
 def _test_marker_parser_impl(env, _target):
     # Simple
@@ -172,11 +192,233 @@ def _test_marker_evaluation(name):
     util.helper_target(native.filegroup, name = name + "_subject")
     analysis_test(name = name, target = name + "_subject", impl = _test_marker_evaluation_impl)
 
+def _test_version_marker_fallback_impl(env, _target):
+    # Upstream `_eval_op`: an invalid environment version makes the comparison
+    # False instead of failing.
+    env.expect.that_bool(_eval("platform_release >= '5'")).equals(False)
+    env.expect.that_bool(_eval("platform_release >= '5'", platform_release = "6.8.0-1015-gcp")).equals(False)
+    env.expect.that_bool(_eval("python_version >= '3.8'", python_version = "")).equals(False)
+    env.expect.that_bool(_eval("'3.*' == python_version")).equals(False)
+    env.expect.that_bool(_eval("platform_release != '5'", platform_release = "6.8.0-1015-gcp")).equals(False)
+
+    # An invalid specifier falls back to the string operator table.
+    env.expect.that_bool(_eval("platform_release == '6.8.0-1015-gcp'", platform_release = "6.8.0-1015-gcp")).equals(True)
+    env.expect.that_bool(_eval("platform_release == ''")).equals(True)
+    env.expect.that_bool(_eval("platform_release != ''")).equals(False)
+    env.expect.that_bool(_eval("python_version > '3.10.*'")).equals(False)
+    env.expect.that_bool(_eval("python_version >= '3.12.*'")).equals(False)
+    env.expect.that_bool(_eval("python_version <= '3.12.*'")).equals(False)
+    env.expect.that_bool(_eval("python_version != 'abc'")).equals(True)
+    env.expect.that_bool(_eval("python_version < 'abc'")).equals(False)
+
+    # `===` compares strings (case-insensitively), even for invalid versions.
+    env.expect.that_bool(_eval("platform_release === '6.8.0-1015-GCP'", platform_release = "6.8.0-1015-gcp")).equals(True)
+    env.expect.that_bool(_eval("python_version === '3.12.0'")).equals(False)
+    env.expect.that_bool(_eval("python_version === ' 3.12'")).equals(True)
+
+    # The value is appended to the operator before parsing, like upstream.
+    env.expect.that_bool(_eval("python_version < '=3.12'")).equals(True)
+    env.expect.that_bool(_eval("python_version == '=3.12'")).equals(True)
+
+    # Valid versions keep PEP 440 semantics; pre-releases always match.
+    env.expect.that_bool(_eval("python_version == '3.12.0'")).equals(True)
+    env.expect.that_bool(_eval("python_version == '3.12.*'")).equals(True)
+    env.expect.that_bool(_eval("python_version != '3.11.*'")).equals(True)
+    env.expect.that_bool(_eval("python_full_version > '3.12'", python_full_version = "3.13.0rc1")).equals(True)
+    env.expect.that_bool(_eval("python_full_version < '3.13'", python_full_version = "3.13.0rc1")).equals(False)
+    env.expect.that_bool(_eval("'3.12' < python_version", python_version = "3.13")).equals(True)
+
+    # `in` / `not in` are substring tests, never version comparisons.
+    env.expect.that_bool(_eval("'6.8' in platform_release", platform_release = "6.8.0-1015-gcp")).equals(True)
+    env.expect.that_bool(_eval("python_version not in '3.10 3.11'")).equals(True)
+
+    # `_repair_python_full_version` applies to the environment value for every operator.
+    env.expect.that_bool(_eval("python_full_version >= '3.12.1'", python_full_version = "3.12.1+")).equals(True)
+    env.expect.that_bool(_eval("python_full_version == '3.12.1+local'", python_full_version = "3.12.1+")).equals(True)
+    env.expect.that_bool(_eval("python_full_version === '3.12.1+'", python_full_version = "3.12.1+")).equals(False)
+    env.expect.that_bool(_eval("'local' in python_full_version", python_full_version = "3.12.1+")).equals(True)
+
+def _test_version_marker_fallback(name):
+    util.helper_target(native.filegroup, name = name + "_subject")
+    analysis_test(name = name, target = name + "_subject", impl = _test_version_marker_fallback_impl)
+
+def _test_string_operator_table_impl(env, _target):
+    # Upstream `_operators`: `<`/`>` are always False, `<=`/`>=` mean equality.
+    env.expect.that_bool(_eval("platform_machine < 'z'")).equals(False)
+    env.expect.that_bool(_eval("platform_machine > 'a'")).equals(False)
+    env.expect.that_bool(_eval("sys_platform >= 'darwin'")).equals(False)
+    env.expect.that_bool(_eval("sys_platform >= 'linux'")).equals(True)
+    env.expect.that_bool(_eval("sys_platform <= 'linux'")).equals(True)
+    env.expect.that_bool(_eval("'3.11' < os_name")).equals(False)
+    env.expect.that_bool(_eval("'lin' in sys_platform")).equals(True)
+    env.expect.that_bool(_eval("sys_platform not in 'linux2'")).equals(False)
+    env.expect.that_bool(_eval("sys_platform != 'linux'")).equals(False)
+
+    # Both operands may be strings; the right-hand one names the environment key.
+    env.expect.that_bool(_eval("'posix' == 'os_name'")).equals(True)
+
+    # Variable-vs-variable compares against the right-hand variable's name.
+    env.expect.that_bool(_eval("os_name == python_version", os_name = "python_version")).equals(True)
+
+def _test_string_operator_table(name):
+    util.helper_target(native.filegroup, name = name + "_subject")
+    analysis_test(name = name, target = name + "_subject", impl = _test_string_operator_table_impl)
+
+def _test_list_valued_extra_impl(env, _target):
+    active = ["Foo.Bar", "baz", "extra-5-mypkg-cpu"]
+    env.expect.that_bool(_eval("extra == 'foo-bar'", extra = active)).equals(True)
+    env.expect.that_bool(_eval("extra == 'FOO_bar'", extra = active)).equals(True)
+    env.expect.that_bool(_eval("'Baz' == extra", extra = active)).equals(True)
+    env.expect.that_bool(_eval("extra === 'baz'", extra = active)).equals(True)
+    env.expect.that_bool(_eval("extra == 'x'", extra = active)).equals(False)
+    env.expect.that_bool(_eval("extra != 'x'", extra = active)).equals(True)
+    env.expect.that_bool(_eval("extra != 'baz'", extra = active)).equals(False)
+    env.expect.that_bool(_eval("'baz' != extra", extra = active)).equals(False)
+
+    # Mixed real extra + synthetic uv conflict token.
+    m = "extra == 'extra-5-mypkg-cpu' and extra != 'extra-5-mypkg-gpu'"
+    env.expect.that_bool(_eval(m, extra = active)).equals(True)
+    env.expect.that_bool(_eval(m, extra = ["foo", "extra-5-mypkg-gpu", "extra-5-mypkg-cpu"])).equals(False)
+    env.expect.that_bool(_eval("(extra == 'foo-bar' or extra == 'nope') and os_name == 'posix'", extra = active)).equals(True)
+
+    # Tuples behave like lists.
+    env.expect.that_bool(_eval("extra == 'baz'", extra = ("baz",))).equals(True)
+    env.expect.that_bool(_eval("extra != 'baz'", extra = ("baz",))).equals(False)
+
+    # An empty list: `==` is False, `!=` is True.
+    env.expect.that_bool(_eval("extra == 'baz'", extra = [])).equals(False)
+    env.expect.that_bool(_eval("extra == ''", extra = [])).equals(False)
+    env.expect.that_bool(_eval("extra != 'baz'", extra = [])).equals(True)
+
+    # Scalar `extra` keeps upstream semantics (missing / None / "" all mean "").
+    env.expect.that_bool(_eval("extra == ''")).equals(True)
+    env.expect.that_bool(_eval("extra == ''", extra = None)).equals(True)
+    env.expect.that_bool(_eval("extra == 'foo-bar'", extra = "Foo.Bar")).equals(True)
+    env.expect.that_bool(_eval("extra in 'foo-bar'", extra = "Foo.Bar")).equals(True)
+    env.expect.that_bool(_eval("extra < 'z'", extra = "Foo.Bar")).equals(False)
+    env.expect.that_bool(_eval("extra <= 'foo-bar'", extra = "Foo.Bar")).equals(True)
+
+def _test_list_valued_extra(name):
+    util.helper_target(native.filegroup, name = name + "_subject")
+    analysis_test(name = name, target = name + "_subject", impl = _test_list_valued_extra_impl)
+
+def _test_marker_aliases_impl(env, _target):
+    # `python_implementation` is an alias for `platform_python_implementation`.
+    env.expect.that_bool(_eval("python_implementation == 'CPython'")).equals(True)
+    env.expect.that_bool(_eval("platform.python_implementation == 'CPython'")).equals(True)
+    m = markers.parse("python_implementation == 'CPython'")
+    env.expect.that_str(m[0][0].value).equals("platform_python_implementation")
+
+    # Dotted names map to the underscore form.
+    env.expect.that_bool(_eval("os.name == 'posix' and sys.platform == 'linux'")).equals(True)
+    env.expect.that_bool(_eval("platform.machine == 'x86_64' and platform.version == ''")).equals(True)
+
+def _test_marker_aliases(name):
+    util.helper_target(native.filegroup, name = name + "_subject")
+    analysis_test(name = name, target = name + "_subject", impl = _test_marker_aliases_impl)
+
+# Failure cases: (marker, environment overrides or None to only parse, expected
+# message fragments).
+_FAILURES = [
+    # Undefined comparisons on non-version keys.
+    ("sys_platform ~= 'linux'", {}, ["Undefined comparison", "sys_platform ~= \"linux\""]),
+    ("sys_platform === 'linux'", {}, ["Undefined comparison"]),
+    ("python_version ~= 'abc'", {}, ["Undefined comparison"]),
+    # Missing environment keys.
+    ("os_name == 'a'", {"os_name": None}, ["Undefined environment variable 'os_name' in marker `os_name == \"a\"`"]),
+    ("'a' in extras", {"extras": None}, ["Undefined environment variable 'extras'"]),
+    # Collections on the left-hand side.
+    ("extras == 'a'", {"extras": ["a"]}, ["the left-hand side must be a string"]),
+    # List-valued extra with unsupported operators.
+    ("extra in 'baz,foo'", {"extra": ["foo"]}, ["Operator 'in' is not supported when 'extra' is a list of extras", "extra in \"baz,foo\""]),
+    ("extra not in 'baz,foo'", {"extra": ["foo"]}, ["Operator 'not in' is not supported"]),
+    ("'foo' in extra", {"extra": ["foo"]}, ["Operator 'in' is not supported"]),
+    ("extra < 'z'", {"extra": ["foo"]}, ["Operator '<' is not supported"]),
+    ("extra ~= 'z'", {"extra": ("foo",)}, ["Operator '~=' is not supported"]),
+    ("extra >= 'z'", {"extra": []}, ["Operator '>=' is not supported"]),
+    # Bad environment value types.
+    ("extra == 'a'", {"extra": 1}, ["must be a string or a list/tuple of strings"]),
+    ("extra == 'a'", {"extra": ["a", 1]}, ["must be a string or a list/tuple of strings"]),
+    ("os_name == 'a'", {"os_name": 1}, ["the left-hand side must be a string"]),
+    ("'a' in extras", {"extras": ["a", 1]}, ["must contain only strings"]),
+]
+
+def _failure_subject_impl(ctx):
+    m = markers.parse(ctx.attr.marker)
+    if ctx.attr.env_overrides:
+        env = dict(_ENV)
+        for k, v in json.decode(ctx.attr.env_overrides).items():
+            if v == None:
+                env.pop(k, None)
+            elif k == "extra" and type(v) == "dict":
+                env[k] = tuple(v["tuple"])
+            else:
+                env[k] = v
+        markers.evaluate(m, env)
+    return []
+
+_failure_subject = rule(
+    implementation = _failure_subject_impl,
+    attrs = {
+        "env_overrides": attr.string(),
+        "marker": attr.string(mandatory = True),
+    },
+)
+
+def _make_failure_test_impl(fragments):
+    def _impl(env, target):
+        for fragment in fragments:
+            env.expect.that_target(target).failures().contains_predicate(matching.contains(fragment))
+
+    return _impl
+
+def _failure_tests(name):
+    names = []
+
+    # buildifier: disable=enumerate
+    for i, (marker, overrides, fragments) in enumerate(_FAILURES):
+        test_name = "{}_{}".format(name, i)
+        env_overrides = ""
+        if overrides != None:
+            encoded = {}
+            for k, v in overrides.items():
+                encoded[k] = {"tuple": list(v)} if type(v) == "tuple" else v
+            env_overrides = json.encode(encoded) if encoded else "{}"
+        util.helper_target(
+            _failure_subject,
+            name = test_name + "_subject",
+            marker = marker,
+            env_overrides = env_overrides,
+        )
+        analysis_test(
+            name = test_name,
+            target = test_name + "_subject",
+            expect_failure = True,
+            impl = _make_failure_test_impl(fragments),
+        )
+        names.append(test_name)
+    return names
+
 def markers_test_suite(name):
+    """Sets up the marker tests.
+
+    Args:
+        name: the name of the test suite
+    """
     test_suite(
-        name = name,
+        name = name + "_standard",
         tests = [
             _test_marker_parser,
             _test_marker_evaluation,
+            _test_version_marker_fallback,
+            _test_string_operator_table,
+            _test_list_valued_extra,
+            _test_marker_aliases,
         ],
+    )
+
+    failure_tests = _failure_tests(name + "_failure")
+    native.test_suite(
+        name = name,
+        tests = [":" + name + "_standard"] + [":" + n for n in failure_tests],
     )

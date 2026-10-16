@@ -4,6 +4,7 @@ Derived from pypa/packaging: packaging/markers.py (Apache 2.0 / BSD).
 Baseline: pypa/packaging 26.2
 """
 
+load("@re.bzl", "re")
 load("//pypackaging/private/specifiers:specifiers.bzl", "parse_specifier", "specifier_contains")
 load("//pypackaging/private/utils:utils.bzl", "utils")
 
@@ -181,7 +182,10 @@ def _tokenizer_expect(tokenizer, name, expected):
 def _parse_marker_var(tokenizer):
     if _tokenizer_check(tokenizer, "VARIABLE"):
         token = _tokenizer_read(tokenizer)
-        return struct(type = "variable", value = token.text.replace(".", "_"))
+        name = token.text.replace(".", "_")
+        if name == "python_implementation":
+            name = "platform_python_implementation"
+        return struct(type = "variable", value = name)
     elif _tokenizer_check(tokenizer, "QUOTED_STRING"):
         token = _tokenizer_read(tokenizer)
 
@@ -269,6 +273,17 @@ def parse_marker(marker_str):
 
     return current_expr
 
+_OPS = ("===", "==", "~=", "!=", "<=", ">=", "<", ">")
+
+def _format_node(node):
+    if node.type == "string":
+        return "\"" + node.value + "\""
+    return node.value
+
+def _format_item(item):
+    lhs, op, rhs = item
+    return "{} {} {}".format(_format_node(lhs), op, _format_node(rhs))
+
 _MARKERS_REQUIRING_VERSION = {
     "implementation_version": True,
     "platform_release": True,
@@ -276,101 +291,218 @@ _MARKERS_REQUIRING_VERSION = {
     "python_version": True,
 }
 
+_MARKERS_ALLOWING_SET = {
+    "dependency_groups": True,
+    "extras": True,
+}
+
+_COLLECTION_TYPES = ("list", "tuple", "set", "dict")
+
+# Characters matched by Python's `\s` in the ASCII range, sorted.
+_PY_WS = "\t\n\013\014\r\034\035\036\037 "
+
+# Local, non-failing validators that mirror upstream's
+# `try: Specifier(op + value) except InvalidSpecifier` and the implicit
+# `Version(...)` parse in `Specifier.contains` (see `_eval_item`). They follow
+# `packaging.specifiers.Specifier._regex` and `packaging.version.VERSION_PATTERN`.
+# TODO: switch to non-failing parse helpers from specifiers.bzl / version.bzl
+# once those exist.
+_PRE = r"(?:[-_.]?(?:alpha|beta|preview|pre|a|b|c|rc)[-_.]?[0-9]*)?"
+_POST = r"(?:-[0-9]+|[-_.]?(?:post|rev|r)[-_.]?[0-9]*)?"
+_DEV = r"(?:[-_.]?dev[-_.]?[0-9]*)?"
+_LOCAL = r"(?:\+[a-z0-9]+(?:[-_.][a-z0-9]+)*)?"
+_RELEASE = r"v?(?:[0-9]+!)?[0-9]+(?:\.[0-9]+)*"
+
+_SPECIFIER_RE = re.compile(
+    r"\s*(?:" +
+    r"===\s*[^\s;)]*" +
+    r"|(?:==|!=)\s*" + _RELEASE + r"(?:\.\*|" + _PRE + _POST + _DEV + _LOCAL + r")?" +
+    r"|~=\s*v?(?:[0-9]+!)?[0-9]+(?:\.[0-9]+)+" + _PRE + _POST + _DEV +
+    r"|(?:<=|>=|<|>)\s*" + _RELEASE + _PRE + _POST + _DEV +
+    r")\s*",
+    re.I,
+)
+
+_VERSION_RE = re.compile(_RELEASE + _PRE + _POST + _DEV + _LOCAL, re.I)
+
+_DIGITS_AND_DOT = ".0123456789"
+
+def _is_plain_release(s):
+    return s != "" and not s.lstrip(_DIGITS_AND_DOT) and "" not in s.split(".")
+
+def _is_valid_specifier(spec_str):
+    # Fast path for the common `<op><digits and dots>` form.
+    for op in _OPS:
+        if spec_str.startswith(op):
+            rest = spec_str[len(op):]
+            if _is_plain_release(rest) and (op != "~=" or "." in rest):
+                return True
+            break
+    return _SPECIFIER_RE.fullmatch(spec_str) != None
+
+def _is_valid_version(s):
+    return _is_plain_release(s) or _VERSION_RE.fullmatch(s) != None
+
+def _env_lookup(environment, key, item):
+    value = environment.get(key)
+    if value == None:
+        fail("Undefined environment variable '{}' in marker `{}`".format(key, _format_item(item)))
+    return value
+
+def _canonicalize_collection(value, key, item):
+    out = []
+    for v in value:
+        if type(v) != "string":
+            fail("Marker environment value for '{}' must contain only strings, got {} (in marker `{}`)".format(
+                key,
+                type(v),
+                _format_item(item),
+            ))
+        out.append(utils.canonicalize_name(v))
+    return out
+
 def _eval_item(item, environment):
     lhs, op, rhs = item
 
     if lhs.type == "variable":
         key = lhs.value
-        lhs_val = environment.get(key)
-        if lhs_val == None:
-            if key == "extra":
-                lhs_val = ""
-            else:
-                fail("Undefined environment variable: {}".format(key))
+        lhs_val = _env_lookup(environment, key, item)
         rhs_val = rhs.value
+        env_val = lhs_val
     else:
         key = rhs.value
         lhs_val = lhs.value
-        rhs_val = environment.get(key)
-        if rhs_val == None:
-            if key == "extra":
-                rhs_val = ""
-            else:
-                fail("Undefined environment variable: {}".format(key))
+        rhs_val = _env_lookup(environment, key, item)
+        env_val = rhs_val
 
-    # Apply canonicalization for PEP 685 / PEP 735
-    if key in ("extra", "extras", "dependency_groups"):
-        if type(lhs_val) == "list":
-            # buildifier: disable=string-iteration
-            lhs_val = [utils.canonicalize_name(v) for v in lhs_val]
-        elif type(lhs_val) == "string":
+    # PEP 685: normalize the value compared against `extra`.
+    if key == "extra":
+        if lhs.type == "variable":
+            rhs_val = utils.canonicalize_name(rhs_val)
+        else:
             lhs_val = utils.canonicalize_name(lhs_val)
 
-        if type(rhs_val) == "list":
-            # buildifier: disable=string-iteration
-            rhs_val = [utils.canonicalize_name(v) for v in rhs_val]
-        elif type(rhs_val) == "string":
-            rhs_val = utils.canonicalize_name(rhs_val)
-
-    if key in _MARKERS_REQUIRING_VERSION and op not in ("in", "not in"):
-        # Use specifier_contains
-        spec = parse_specifier("{}{}".format(op, rhs_val))
-        return specifier_contains(spec, lhs_val)
-
-    # Non-standard extension for uv (uv-pep508): PEP 508 defines `extra` as a
-    # single string (and PEP 751 uses `'...' in extras`), but uv.lock encodes
-    # multiple active extras and synthetic conflict markers using `extra == '...'`
-    # and `extra != '...'` evaluated as membership against the active extras set.
-    if key == "extra" and (type(lhs_val) == "list" or type(rhs_val) == "list"):
-        elem_val = rhs_val if type(lhs_val) == "list" else lhs_val
-        list_val = lhs_val if type(lhs_val) == "list" else rhs_val
-        if op in ("==", "==="):
-            return elem_val in list_val
+    # Non-standard, uv-compatible extension: `extra` may be a list/tuple of
+    # active extras (already normalized by `_prepare_environment`).
+    if key == "extra" and type(env_val) in ("list", "tuple"):
+        value = rhs_val if lhs.type == "variable" else lhs_val
+        if op == "==" or op == "===":
+            return value in env_val
         if op == "!=":
-            return elem_val not in list_val
+            return value not in env_val
+        fail("Operator '{}' is not supported when 'extra' is a list of extras (in marker `{}`); only ==, === and != are".format(
+            op,
+            _format_item(item),
+        ))
 
-    # Standard operators
-    if op == "==":
-        return lhs_val == rhs_val
-    if op == "!=":
-        return lhs_val != rhs_val
-    if op == "<=":
-        return lhs_val <= rhs_val
-    if op == "<":
-        return lhs_val < rhs_val
-    if op == ">=":
-        return lhs_val >= rhs_val
-    if op == ">":
-        return lhs_val > rhs_val
-    if op == "~=":
-        return lhs_val >= rhs_val
-    if op == "===":
-        return lhs_val == rhs_val
+    if type(lhs_val) != "string":
+        fail("Cannot evaluate marker `{}`: the left-hand side must be a string, but '{}' is a {}".format(
+            _format_item(item),
+            key,
+            type(lhs_val),
+        ))
+    if type(rhs_val) != "string" and type(rhs_val) not in _COLLECTION_TYPES:
+        fail("Marker environment value for '{}' must be a string or a collection of strings, got {} (in marker `{}`)".format(
+            key,
+            type(rhs_val),
+            _format_item(item),
+        ))
+
+    if key in _MARKERS_ALLOWING_SET:
+        lhs_val = utils.canonicalize_name(lhs_val)
+        if type(rhs_val) == "string":
+            rhs_val = utils.canonicalize_name(rhs_val)
+        else:
+            rhs_val = _canonicalize_collection(rhs_val, key, item)
+
+    # Upstream `_eval_op`: version comparison when `op + rhs` is a valid
+    # specifier; otherwise fall through to the string operator table.
+    if key in _MARKERS_REQUIRING_VERSION and type(rhs_val) == "string" and op != "in" and op != "not in":
+        spec_str = op + rhs_val
+        if _is_valid_specifier(spec_str):
+            spec = parse_specifier(spec_str)
+            if spec.operator == "===":
+                return specifier_contains(spec, lhs_val)
+            stripped = lhs_val.strip(_PY_WS)
+            if not _is_valid_version(stripped):
+                return False
+            return specifier_contains(spec, stripped)
+
     if op == "in":
         return lhs_val in rhs_val
     if op == "not in":
         return lhs_val not in rhs_val
+    if op == "<" or op == ">":
+        return False
+    if op == "==" or op == "<=" or op == ">=":
+        return lhs_val == rhs_val
+    if op == "!=":
+        return lhs_val != rhs_val
+    fail("Undefined comparison: operator '{}' is not defined for {} and {} (in marker `{}`)".format(
+        op,
+        repr(lhs_val),
+        repr(rhs_val),
+        _format_item(item),
+    ))
 
-    fail("Unsupported operator: {}".format(op))
+def _prepare_environment(environment):
+    env = dict(environment)
 
-def _all(iterable):
-    for item in iterable:
-        if not item:
-            return False
-    return True
+    extra = env.get("extra")
+    if extra == None or extra == "":
+        env["extra"] = ""
+    elif type(extra) == "string":
+        env["extra"] = utils.canonicalize_name(extra)
+    elif type(extra) in ("list", "tuple"):
+        out = []
+        for e in extra:
+            if type(e) != "string":
+                fail("Marker environment value for 'extra' must be a string or a list/tuple of strings, got an element of type {}".format(type(e)))
+            out.append(utils.canonicalize_name(e))
+        env["extra"] = out
+    else:
+        fail("Marker environment value for 'extra' must be a string or a list/tuple of strings, got {}".format(type(extra)))
 
-def _any(iterable):
-    for item in iterable:
-        if item:
-            return True
-    return False
+    # Upstream `_repair_python_full_version`.
+    python_full_version = env.get("python_full_version")
+    if type(python_full_version) == "string" and python_full_version.endswith("+"):
+        env["python_full_version"] = python_full_version + "local"
+    return env
 
 def evaluate_markers(markers, environment):
     """Evaluates a parsed marker expression against an environment.
 
+    Semantics follow `packaging.markers.Marker.evaluate` (packaging 26.2):
+
+    - `python_version`, `python_full_version`, `implementation_version` and
+      `platform_release` are compared as PEP 440 versions when `op + value` is a
+      valid specifier (pre-releases always match). If it is not a valid
+      specifier, the comparison falls back to the string table below; if the
+      version being tested is not a valid version, the comparison is False. A
+      `python_full_version` ending in "+" gets "local" appended first.
+    - All other comparisons use upstream's string table: `==`, `!=`, `in` and
+      `not in` as usual, `<` and `>` are always False, `<=` and `>=` mean
+      equality, and `~=` and `===` fail ("Undefined comparison").
+    - `extra`, `extras` and `dependency_groups` values are normalized (PEP 685
+      / PEP 735) on both sides.
+
+    There is no default environment: every variable the marker references must
+    be present, except `extra`, which defaults to "" (None is also treated as
+    ""). Callers must supply `extras` / `dependency_groups` (as lists of
+    strings) when markers use them.
+
+    Non-standard extension (uv-compatible): `environment["extra"]` may be a
+    list or tuple of strings, the set of active extras (uv also uses this for
+    its conflict tokens). Each element is normalized. `extra == X`,
+    `X == extra` and `===` are True iff X is in the set; `!=` is True iff it is
+    not. An empty list therefore makes `==` False and `!=` True. Any other
+    operator with a list-valued `extra` fails.
+
     Args:
-        markers: The parsed marker tree (list).
-        environment: A dict mapping environment variables to values.
+        markers: The parsed marker tree (list), as returned by `parse`. An
+            empty list evaluates to True.
+        environment: A dict mapping marker variable names (underscore form)
+            to values.
 
     Returns:
         True if the markers evaluate to true, False otherwise.
@@ -378,46 +510,43 @@ def evaluate_markers(markers, environment):
     if not markers:
         return True
 
+    environment = _prepare_environment(environment)
+
     # Stack holds tuples: (markers_list, index, groups)
     stack = [(markers, 0, [[]])]
 
-    for _ in range(len(str(markers)) + 1):
-        if not stack:
-            break
-
+    # Each step advances an index or pops a level, so this always terminates.
+    for _ in range(1 << 30):
         current_markers, i, groups = stack[-1]
 
         if i >= len(current_markers):
-            # Level finished
-            result = _any([_all(g) for g in groups])
+            # Level finished: any(all(g) for g in groups)
+            result = False
+            for g in groups:
+                if all(g):
+                    result = True
+                    break
             stack.pop()
-            if stack:
-                stack[-1][2][-1].append(result)
-            else:
+            if not stack:
                 return result
+            stack[-1][2][-1].append(result)
             continue
 
         marker = current_markers[i]
+        stack[-1] = (current_markers, i + 1, groups)
 
-        if type(marker) == type([]):
-            # Sub-expression
-            # Advance parent index BEFORE pushing
-            stack[-1] = (current_markers, i + 1, groups)
+        if type(marker) == "list":
             stack.append((marker, 0, [[]]))
-        elif type(marker) == type(()):
-            # Comparison item
-            val = _eval_item(marker, environment)
-            groups[-1].append(val)
-            stack[-1] = (current_markers, i + 1, groups)
+        elif type(marker) == "tuple":
+            groups[-1].append(_eval_item(marker, environment))
         elif marker == "or":
             groups.append([])
-            stack[-1] = (current_markers, i + 1, groups)
         elif marker == "and":
-            stack[-1] = (current_markers, i + 1, groups)
+            pass
         else:
             fail("Unexpected marker: {}".format(marker))
 
-    fail("Evaluation exceeded iteration limit")
+    fail("internal error: marker evaluation did not terminate")
 
 markers = struct(
     parse = parse_marker,
