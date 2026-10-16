@@ -14,10 +14,22 @@ git archive --format=tar --prefix=${PREFIX}/ ${TAG} | gzip > $ARCHIVE
 # Add generated API docs
 docs="$(mktemp -d)"; targets="$(mktemp)"
 bazel --output_base="$docs" query --output=label --output_file="$targets" 'kind("starlark_doc_extract rule", //...)'
+if [ ! -s "$targets" ]; then
+    echo "ERROR: no starlark_doc_extract targets found; the docs archive would be empty" >&2
+    exit 1
+fi
 bazel --output_base="$docs" build --target_pattern_file="$targets"
+bazel_bin="$(bazel --output_base="$docs" info bazel-bin)"
+# Only ship the extracted API protos, not other build outputs.
+(cd "$bazel_bin" && find . -name '*.binaryproto' -print0 | LC_ALL=C sort -z) > "$targets"
+if [ ! -s "$targets" ]; then
+    echo "ERROR: building the starlark_doc_extract targets produced no .binaryproto files" >&2
+    exit 1
+fi
 tar --create --auto-compress \
-    --directory "$(bazel --output_base="$docs" info bazel-bin)" \
-    --file "$GITHUB_WORKSPACE/${ARCHIVE%.tar.gz}.docs.tar.gz" .
+    --directory "$bazel_bin" \
+    --null --files-from "$targets" \
+    --file "$GITHUB_WORKSPACE/${ARCHIVE%.tar.gz}.docs.tar.gz"
 
 cat << EOF
 ## Using Bzlmod

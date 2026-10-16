@@ -1,0 +1,15 @@
+"""Stardoc protos of the public API.
+
+`.github/workflows/release_prep.sh` builds every `starlark_doc_extract` target
+in the repository and publishes the result as the release's `docs.tar.gz`. The
+Bazel Central Registry links to it as `docs_url`.
+
+Keep this in its own package so the root package stays free of rules that
+consumers don't need.
+"""
+
+starlark_doc_extract(
+    name = "pypackaging",
+    src = "//:pypackaging.bzl",
+    deps = ["//:pypackaging"],
+)
