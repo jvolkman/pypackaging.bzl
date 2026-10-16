@@ -416,6 +416,19 @@ def _test_compatible_release_impl(env, _target):
     env.expect.that_bool(specifiers.contains(specifiers.parse("~=1.0c1"), "2.0")).equals(False)
     env.expect.that_bool(specifiers.contains(specifiers.parse("~=v1.0"), "2.0")).equals(False)
 
+    # Lookalikes that packaging 26.2 handles the same way (no divergence).
+    for version, spec_str, expected in [
+        ("1.5", "~=1.0RC1", True),
+        ("1.5", "~=1.0-c1", True),
+        ("1.5", "~=1.0_c1", True),
+        ("1.5", "~=1.0alpha1", True),
+        ("1.5", "~=1.0.post1", True),
+        ("2.0", "~=1.0RC1", False),
+        ("1.0.5", "~=1.0.0RC1", True),
+        ("1.1", "~=1.0.0RC1", False),
+    ]:
+        env.expect.where(spec = spec_str, version = version).that_bool(specifiers.contains(specifiers.parse(spec_str), version)).equals(expected)
+
 def _test_compatible_release(name):
     util.helper_target(native.filegroup, name = name + "_subject")
     analysis_test(name = name, target = name + "_subject", impl = _test_compatible_release_impl)
@@ -448,7 +461,11 @@ def _test_parse_set_empty_items(name):
     analysis_test(name = name, target = name + "_subject", impl = _test_parse_set_empty_items_impl)
 
 def _parse_subject_impl(ctx):
-    if ctx.attr.kind == "set":
+    if ctx.attr.kind == "contains_int":
+        specifiers.set_contains(specifiers.parse_set(ctx.attr.spec), 1)
+    elif ctx.attr.kind == "contains_none":
+        specifiers.contains(specifiers.parse(ctx.attr.spec), None)
+    elif ctx.attr.kind == "set":
         specifiers.parse_set(ctx.attr.spec)
     else:
         specifiers.parse(ctx.attr.spec)
@@ -680,6 +697,30 @@ def _test_filter(name):
     util.helper_target(native.filegroup, name = name + "_subject")
     analysis_test(name = name, target = name + "_subject", impl = _test_filter_impl)
 
+# A candidate that is neither a string nor a parsed version fails clearly.
+_BAD_CANDIDATES = [
+    ("contains_int", ">=1"),
+    ("contains_none", "===1"),
+]
+
+def _bad_candidate_test_impl(env, target):
+    env.expect.that_target(target).failures().contains_predicate(matching.contains("version must be a string or a struct returned by version.parse"))
+
+def _test_triple_equal_non_ascii_impl(env, _target):
+    # The trailing "\240" / "\205" bytes of these UTF-8 characters are not
+    # whitespace and must survive stripping on every Bazel version.
+    for spec_str, version in [
+        ("===foo\303\240", "foo\303\240"),
+        ("===\342\200\240", "\342\200\240"),
+        ("=== \303\205x\303\205 ", "\303\205x\303\205"),
+    ]:
+        env.expect.where(spec = spec_str).that_str(specifiers.parse(spec_str).version).equals(version)
+        env.expect.where(spec = spec_str).that_bool(specifiers.contains(specifiers.parse(spec_str), version)).equals(True)
+
+def _test_triple_equal_non_ascii(name):
+    util.helper_target(native.filegroup, name = name + "_subject")
+    analysis_test(name = name, target = name + "_subject", impl = _test_triple_equal_non_ascii_impl)
+
 def specifiers_test_suite(name):
     """Sets up the specifier tests.
 
@@ -702,6 +743,7 @@ def specifiers_test_suite(name):
             _test_prereleases_contains,
             _test_prereleases_property,
             _test_filter,
+            _test_triple_equal_non_ascii,
         ],
     )
 
@@ -712,6 +754,13 @@ def specifiers_test_suite(name):
         test_name = name + "_invalid_{}".format(i)
         util.helper_target(_parse_subject, name = test_name + "_subject", kind = kind, spec = spec)
         analysis_test(name = test_name, target = test_name + "_subject", expect_failure = True, impl = _invalid_specifier_test_impl)
+        invalid_test_names.append(test_name)
+
+    # buildifier: disable=enumerate
+    for i, (kind, spec) in enumerate(_BAD_CANDIDATES):
+        test_name = name + "_bad_candidate_{}".format(i)
+        util.helper_target(_parse_subject, name = test_name + "_subject", kind = kind, spec = spec)
+        analysis_test(name = test_name, target = test_name + "_subject", expect_failure = True, impl = _bad_candidate_test_impl)
         invalid_test_names.append(test_name)
 
     native.test_suite(

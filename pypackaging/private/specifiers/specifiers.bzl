@@ -7,9 +7,14 @@ Differences from `packaging.specifiers`:
 
 * `~=` derives its prefix from the normalized specifier version, as PEP 440
   says: `~=1.0c1` is `>=1.0c1, ==1.*` and `~=v1.0` is `>=1.0, ==1.*`.
-  packaging 26.2 derives it from the raw string, so it treats unusual
-  spellings such as `~=1.0c1`, `~=1.0.r1` or `~=1.0.RC1` as `==1.0.*`, and
-  `~=v1.0` matches nothing.
+  packaging 26.2 derives it from the raw string, splitting off only labels
+  that start with lowercase `a`, `b`, `rc`, `dev` or `post`. The results
+  differ when the release is directly followed by `c` (`~=1.0c1`), when a
+  `.`-separated label isn't one of those (`~=1.0.r1`, `~=1.0.pre1`,
+  `~=1.0.RC1`, `~=1.0.0c1`), which packaging treats as one more release
+  segment (`==1.0.*`, `==1.0.0.*`), and with a `v`/`V` prefix, where
+  packaging matches nothing. Spellings such as `~=1.0RC1`, `~=1.0-c1` or
+  `~=1.0.post1` give the same results.
 * Specifiers and sets are immutable structs, so there is no constructor-level
   `prereleases` argument; pass `prereleases` to `contains`, `set_contains`,
   `filter` or `set_filter` instead, which gives the same results.
@@ -57,17 +62,20 @@ def try_parse_specifier(spec_str):
     Returns:
         A specifier struct (see `parse_specifier`), or None.
     """
-    stripped = strip_whitespace(spec_str)
+    return _try_parse_stripped_specifier(strip_whitespace(spec_str))
+
+def _try_parse_stripped_specifier(stripped):
+    """Like `try_parse_specifier` for a string without surrounding whitespace."""
     if stripped.startswith("==="):
-        version = strip_whitespace(stripped[3:])
+        version = lstrip_whitespace(stripped[3:])
         if ";" in version or ")" in version or contains_whitespace(version):
             return None
         return struct(operator = "===", version = version, parsed_version = None)
 
     if stripped.startswith(("==", "!=", "~=", "<=", ">=")):
-        operator, version = stripped[:2], strip_whitespace(stripped[2:])
+        operator, version = stripped[:2], lstrip_whitespace(stripped[2:])
     elif stripped.startswith(("<", ">")):
-        operator, version = stripped[:1], strip_whitespace(stripped[1:])
+        operator, version = stripped[:1], lstrip_whitespace(stripped[1:])
     else:
         return None
 
@@ -217,9 +225,8 @@ def _matches_parsed(spec, v):
 
     if operator == "~=":
         # ~=X.Y.Z is >=X.Y.Z, ==X.Y.*. The prefix comes from the normalized
-        # release, as PEP 440 says.
-        if len(sv.release) < 2:
-            fail("Invalid specifier: {}{} (~= requires at least two release segments)".format(operator, spec.version))
+        # release, as PEP 440 says. Parsing guarantees at least two release
+        # segments.
         return get_public_key(v) >= sv.key and _prefix_match(v, sv.epoch, sv.release[:-1])
 
     fail("Invalid specifier: unknown operator {}".format(operator))
@@ -245,6 +252,8 @@ def _coerce(candidate):
     """Returns (parsed version or None, candidate string or None)."""
     if type(candidate) == "string":
         return try_parse_version(candidate), candidate
+    if type(candidate) != "struct":
+        fail("version must be a string or a struct returned by version.parse, got {}: {}".format(type(candidate), repr(candidate)))
     return candidate, None
 
 def specifier_prereleases(spec):
@@ -354,8 +363,14 @@ def parse_specifier_set(spec_set_str):
         A struct with a `specs` field: the list of parsed specifiers (see
         `parse`), in order.
     """
-    spec_strs = [strip_whitespace(s) for s in spec_set_str.split(",")]
-    specs = [parse_specifier(s) for s in spec_strs if s]
+    specs = []
+    for item in spec_set_str.split(","):
+        item = strip_whitespace(item)
+        if item:
+            spec = _try_parse_stripped_specifier(item)
+            if spec == None:
+                _fail_invalid_specifier(item)
+            specs.append(spec)
 
     return struct(
         specs = specs,
