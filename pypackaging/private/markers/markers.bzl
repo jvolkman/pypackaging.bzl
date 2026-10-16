@@ -233,7 +233,7 @@ def parse_marker(marker_str):
     expr_stack = []
     expecting_atom = True
 
-    for _ in range(1000):
+    for _ in range(len(marker_str) + 1):
         _tokenizer_consume(tokenizer, "WS")
 
         if _tokenizer_check(tokenizer, "END", peek = True):
@@ -264,6 +264,8 @@ def parse_marker(marker_str):
 
     if expr_stack:
         fail("Missing ')'")
+    if not _tokenizer_check(tokenizer, "END", peek = True):
+        fail("Marker parsing exceeded iteration limit")
 
     return current_expr
 
@@ -314,6 +316,18 @@ def _eval_item(item, environment):
         # Use specifier_contains
         spec = parse_specifier("{}{}".format(op, rhs_val))
         return specifier_contains(spec, lhs_val)
+
+    # Non-standard extension for uv (uv-pep508): PEP 508 defines `extra` as a
+    # single string (and PEP 751 uses `'...' in extras`), but uv.lock encodes
+    # multiple active extras and synthetic conflict markers using `extra == '...'`
+    # and `extra != '...'` evaluated as membership against the active extras set.
+    if key == "extra" and (type(lhs_val) == "list" or type(rhs_val) == "list"):
+        elem_val = rhs_val if type(lhs_val) == "list" else lhs_val
+        list_val = lhs_val if type(lhs_val) == "list" else rhs_val
+        if op in ("==", "==="):
+            return elem_val in list_val
+        if op == "!=":
+            return elem_val not in list_val
 
     # Standard operators
     if op == "==":
@@ -367,7 +381,7 @@ def evaluate_markers(markers, environment):
     # Stack holds tuples: (markers_list, index, groups)
     stack = [(markers, 0, [[]])]
 
-    for _ in range(1000):
+    for _ in range(len(str(markers)) + 1):
         if not stack:
             break
 

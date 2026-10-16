@@ -98,6 +98,25 @@ def _test_marker_evaluation_impl(env, _target):
     env_vars_extra_norm["extra"] = "dev_group"
     env.expect.that_bool(markers.evaluate(m, env_vars_extra_norm)).equals(True)
 
+    # Extra as list (multiple active extras / uv conflict tokens)
+    env_vars_extra_list = dict(env_vars)
+    env_vars_extra_list["extra"] = ["cudart", "group_18_native_torch_probe_cuda"]
+    env.expect.that_bool(markers.evaluate(markers.parse("extra == 'cudart'"), env_vars_extra_list)).equals(True)
+    env.expect.that_bool(markers.evaluate(markers.parse("'cudart' == extra"), env_vars_extra_list)).equals(True)
+    env.expect.that_bool(markers.evaluate(markers.parse("extra == 'group-18-native-torch-probe-cuda'"), env_vars_extra_list)).equals(True)
+    env.expect.that_bool(markers.evaluate(markers.parse("extra == 'group-18-native-torch-probe-cpu'"), env_vars_extra_list)).equals(False)
+    env.expect.that_bool(markers.evaluate(markers.parse("extra != 'group-18-native-torch-probe-cpu'"), env_vars_extra_list)).equals(True)
+    env.expect.that_bool(markers.evaluate(markers.parse("extra != 'cudart'"), env_vars_extra_list)).equals(False)
+    env.expect.that_bool(markers.evaluate(markers.parse("'cudart' != extra"), env_vars_extra_list)).equals(False)
+
+    # Large marker (>1000 tokens) parses and evaluates without truncation
+    large_clauses = ["extra == 'tok-{}'".format(i) for i in range(600)]
+    large_marker_str = " or ".join(large_clauses)
+    large_parsed = markers.parse(large_marker_str)
+    env.expect.that_int(len(large_parsed)).equals(1199)
+    env.expect.that_bool(markers.evaluate(large_parsed, {"extra": ["tok-599"]})).equals(True)
+    env.expect.that_bool(markers.evaluate(large_parsed, {"extra": ["tok-600"]})).equals(False)
+
     # Simple True
     m = markers.parse("python_version >= '3.6'")
     env.expect.that_bool(markers.evaluate(m, env_vars)).equals(True)
