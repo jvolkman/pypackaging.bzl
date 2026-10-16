@@ -12,6 +12,8 @@ on:
   #   - cron: "0 15 * * *" # Daily at 3PM UTC
 jobs:
   tag:
+    # Only tag the default branch: the version is computed from its history.
+    if: github.ref == 'refs/heads/main'
     permissions:
       contents: write # allow create tag
     runs-on: ubuntu-latest

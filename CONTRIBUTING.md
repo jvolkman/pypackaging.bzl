@@ -38,11 +38,21 @@ release on their own. Note that the version tool only recognizes `!` on
 `feat` and `fix`, so use a `BREAKING CHANGE:` footer to mark a breaking
 change in a commit of any other type.
 
+### Merging pull requests
+
+The version is computed from the commit messages that land on `main`, so
+merge with **rebase** or a **merge commit**. If you squash, keep the commit
+messages in the squashed message (GitHub's default), or at least keep every
+`!` and `BREAKING CHANGE:` footer: a squash commit titled only
+`Release v0.3.0 (#5)` would be released as a patch version.
+
 ## Releasing
 
-1. Add the release's entries to `CHANGELOG.md`.
+1. Add the release's entries to `CHANGELOG.md`, and replace `Unreleased` in
+   its heading with the release date and the compare link's `HEAD` with the
+   new tag.
 2. Run the **Tag a Release** workflow (`.github/workflows/tag.yaml`) from
-   the Actions tab. It runs [smlx/ccv](https://github.com/smlx/ccv) to
+   the Actions tab, on `main` (it refuses other branches). It runs [smlx/ccv](https://github.com/smlx/ccv) to
    compute the next version. `.github/workflows/next_version.sh` then
    turns a breaking-change bump on 0.x into a minor bump, because ccv would
    otherwise propose v1.0.0. The workflow pushes the tag and calls
