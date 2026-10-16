@@ -5,7 +5,6 @@ Derived from pypa/packaging: packaging/requirements.py and packaging/_parser.py
 Baseline: pypa/packaging 26.2
 """
 
-load("@re.bzl", "re")
 load(
     "//pypackaging/private/markers:markers.bzl",
     "at_end",
@@ -14,31 +13,16 @@ load(
     "skip_ws",
     "syntax_error",
 )
-load("//pypackaging/private/specifiers:specifiers.bzl", "specifiers")
+load("//pypackaging/private/specifiers:specifiers.bzl", "match_specifier_token", "specifiers")
 load("//pypackaging/private/utils:utils.bzl", "utils")
 
 _IDENTIFIER_START = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 _IDENTIFIER_CHARS = _IDENTIFIER_START + "._-"
 _ASCII_WORD_CHARS = _IDENTIFIER_START + "_"
 
-# Upstream SPECIFIER token (`Specifier._specifier_regex_str`), matched as a
-# prefix at the current position.
-_PRE = r"(?:[-_.]?(?:alpha|beta|preview|pre|a|b|c|rc)[-_.]?[0-9]*)?"
-_POST = r"(?:-[0-9]+|[-_.]?(?:post|rev|r)[-_.]?[0-9]*)?"
-_DEV = r"(?:[-_.]?dev[-_.]?[0-9]*)?"
-_LOCAL = r"(?:\+[a-z0-9]+(?:[-_.][a-z0-9]+)*)?"
-_RELEASE = r"v?(?:[0-9]+!)?[0-9]+(?:\.[0-9]+)*"
-
-_SPECIFIER_TOKEN_RE = re.compile(
-    r"===\s*[^\s;)]*" +
-    r"|(?:==|!=)\s*" + _RELEASE + r"(?:\.\*|" + _PRE + _POST + _DEV + _LOCAL + r")?" +
-    r"|~=\s*v?(?:[0-9]+!)?[0-9]+(?:\.[0-9]+)+" + _PRE + _POST + _DEV +
-    r"|(?:<=|>=|<|>)\s*" + _RELEASE + _PRE + _POST + _DEV,
-    re.I,
-)
-
-# Upstream VERSION_LOCAL_LABEL_TRAIL (case-sensitive, like upstream).
-_LOCAL_LABEL_TRAIL_RE = re.compile(r"\+[a-z0-9]+(?:[-_.][a-z0-9]+)*")
+# Upstream VERSION_LOCAL_LABEL_TRAIL is `\+[a-z0-9]+(?:[-_.][a-z0-9]+)*`
+# (case-sensitive); it matches iff "+" is followed by one of these.
+_LOCAL_LABEL_START = "abcdefghijklmnopqrstuvwxyz0123456789"
 
 def _is_word_char(c):
     return c in _ASCII_WORD_CHARS or c >= "\200"
@@ -169,15 +153,15 @@ def _parse(req_str):
         # version_many = (SPECIFIER (WS? COMMA WS? SPECIFIER)*)?
         # (a trailing comma is accepted, like upstream)
         for _ in range(n):
-            m = _SPECIFIER_TOKEN_RE.match(src, pos)
-            if m == None:
+            token_len = match_specifier_token(src[pos:])
+            if not token_len:
                 break
             token_start = pos
-            pos = m.end()
-            specs.append(src[token_start:pos].strip())
+            pos += token_len
+            specs.append(src[token_start:pos])
             if src.startswith(".*", pos):
                 syntax_error(ctx, ".* suffix can only be used with `==` or `!=` operators", token_start, pos + 1)
-            if _LOCAL_LABEL_TRAIL_RE.match(src, pos) != None:
+            if src.startswith("+", pos) and src[pos + 1:pos + 2] and src[pos + 1] in _LOCAL_LABEL_START:
                 syntax_error(ctx, "Local version label can only be used with `==` or `!=` operators", token_start, pos)
             pos = skip_ws(src, pos)
             if pos >= n or src[pos] != ",":

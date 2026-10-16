@@ -167,6 +167,17 @@ _INVALID_REQUIREMENTS = [
     "foo (==1.0))",
     "foo===a)b",
     "foo==1.0 bar",
+    # Specifier tokens end where packaging's specifier regex stops matching.
+    "foo>=1!",
+    "foo==1.0a.*",
+    "foo<=1.0-",
+    "foo==1.0+abc.",
+    "foo>1.0+ABC",
+    "foo==1.*.0",
+    "foo>=1.0rc1+",
+    "foo>=1.0 rc1",
+    "foo~=1.0.*",
+    "foo<=1..0",
     # A specifier and a URL.
     "foo>=1.0 @ https://x",
     "foo (>=1.0) @ https://x",
@@ -396,6 +407,33 @@ def _test_parse_requirement_grammar(name):
     util.helper_target(native.filegroup, name = name + "_subject")
     analysis_test(name = name, target = name + "_subject", impl = _test_parse_requirement_grammar_impl)
 
+def _test_parse_requirement_specifier_tokens_impl(env, _target):
+    # Expected values are from packaging 26.2.
+    cases = [
+        ("foo>=1!2.0", [(">=", "1!2.0")]),
+        ("foo==1.0.*", [("==", "1.0.*")]),
+        ("foo!=v1.0+Local.1", [("!=", "v1.0+Local.1")]),
+        ("foo~=1!1.0rc1.post2.dev3", [("~=", "1!1.0rc1.post2.dev3")]),
+        ("foo>=1.0dev-", [(">=", "1.0dev-")]),
+        ("foo>=1.0.post", [(">=", "1.0.post")]),
+        ("foo==1.0+abc", [("==", "1.0+abc")]),
+        ("foo>=\302\2401.0", [(">=", "1.0")]),
+        ("foo===\302\240x", [("===", "x")]),
+        ("foo(===a)", [("===", "a")]),
+        ("foo== 1.0 ,!= 1.1", [("==", "1.0"), ("!=", "1.1")]),
+        ("foo==1.0.0RC1", [("==", "1.0.0RC1")]),
+        ("foo==V1.0", [("==", "V1.0")]),
+        ("foo==1.0-1", [("==", "1.0-1")]),
+        ("foo==1.0_post-1", [("==", "1.0_post-1")]),
+    ]
+    for s, expected in cases:
+        specs = requirements.parse(s).specifier.specs
+        env.expect.where(req = s).that_collection([(spec.operator, spec.version) for spec in specs]).contains_exactly(expected).in_order()
+
+def _test_parse_requirement_specifier_tokens(name):
+    util.helper_target(native.filegroup, name = name + "_subject")
+    analysis_test(name = name, target = name + "_subject", impl = _test_parse_requirement_specifier_tokens_impl)
+
 def _test_parse_requirement_marker_str_impl(env, _target):
     env.expect.that_bool(requirements.parse("foo>=1").marker_str == None).equals(True)
     env.expect.that_bool(requirements.parse("foo @ https://x").marker_str == None).equals(True)
@@ -495,6 +533,7 @@ def requirements_test_suite(name):
             _test_parse_requirement_no_name,
             _test_parse_requirement_marker_with_at,
             _test_parse_requirement_grammar,
+            _test_parse_requirement_specifier_tokens,
             _test_parse_requirement_marker_str,
             _test_requirement_to_string,
             _test_parse_requirement_error_messages,

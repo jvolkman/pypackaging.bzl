@@ -14,6 +14,5 @@ bzl_library(
         "//pypackaging/private/markers",
         "//pypackaging/private/specifiers",
         "//pypackaging/private/utils",
-        "@re.bzl//:re",
     ],
 )

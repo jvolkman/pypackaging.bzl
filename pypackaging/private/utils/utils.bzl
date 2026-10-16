@@ -3,9 +3,8 @@
 Derived from pypa/packaging: packaging/utils.py (Apache 2.0 / BSD).
 """
 
-load("@re.bzl", "re")
 load("//pypackaging/private/tags:tags.bzl", "tags")
-load("//pypackaging/private/version:version.bzl", "version")
+load("//pypackaging/private/version:version.bzl", "try_parse_version", "version_to_string")
 
 _LOWER = "abcdefghijklmnopqrstuvwxyz"
 _UPPER = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
@@ -22,34 +21,6 @@ _INVALID_ASCII_WHEEL_NAME_CHARS = (
 )
 _VALID_NAME_START = _LOWER + _UPPER + _DIGITS
 _VALID_NAME_CHAR = _VALID_NAME_START + "._-"
-
-# PEP 440 version pattern, as used by version.parse(). It is needed here to
-# detect invalid versions without failing, since Starlark can't catch fail().
-_VERSION_RE = re.compile(r"""
-    v?
-    (?:
-        (?:[0-9]+!)?
-        [0-9]+(?:\.[0-9]+)*
-        (?:[._-]?(?:alpha|a|beta|b|preview|pre|c|rc)[._-]?[0-9]*)?
-        (?:
-            (?:-[0-9]+)
-            |
-            (?:[._-]?(?:post|rev|r)[._-]?[0-9]*)
-        )?
-        (?:[._-]?dev[._-]?[0-9]*)?
-    )
-    (?:\+[a-z0-9]+(?:[._-][a-z0-9]+)*)?
-""", re.X | re.I)
-
-def _try_parse_version(version_str):
-    """Parses a version like packaging's Version(), or returns None if invalid.
-
-    Leading and trailing whitespace is ignored, like packaging.
-    """
-    version_str = version_str.strip()
-    if not _VERSION_RE.fullmatch(version_str):
-        return None
-    return version.parse(version_str)
 
 def _is_valid_name(name):
     # Equivalent to packaging's
@@ -144,35 +115,30 @@ def canonicalize_version(version_input, strip_trailing_zero = True):
     """
     v = version_input
     if type(v) == "string":
-        v = _try_parse_version(version_input)
+        v = try_parse_version(version_input)
         if v == None:
             return version_input
 
-    # Reconstruct string, potentially stripping trailing zeros.
-    release = v.release
+    # Strip trailing zeros from the release, keeping at least one segment.
     if strip_trailing_zero:
-        rel_list = list(release)
-        i = len(rel_list)
-        for _ in range(len(rel_list)):
-            if i > 1 and rel_list[i - 1] == 0:
+        release = v.release
+        i = len(release)
+        for _ in range(len(release)):
+            if i > 1 and release[i - 1] == 0:
                 i -= 1
             else:
                 break
-        release = tuple(rel_list[:i])
+        if i != len(release):
+            v = struct(
+                epoch = v.epoch,
+                release = release[:i],
+                pre = v.pre,
+                post = v.post,
+                dev = v.dev,
+                local = v.local,
+            )
 
-    version_str = ".".join([str(p) for p in release])
-    if v.epoch:
-        version_str = "{}!{}".format(v.epoch, version_str)
-    if v.pre:
-        version_str += "".join([str(p) for p in v.pre])
-    if v.post:
-        version_str += ".post{}".format(v.post[1])
-    if v.dev:
-        version_str += ".dev{}".format(v.dev[1])
-    if v.local:
-        version_str += "+{}".format(".".join([str(p) for p in v.local]))
-
-    return version_str
+    return version_to_string(v)
 
 def _is_valid_wheel_name(name):
     # Equivalent to packaging's re.match(r"^[\w\d._]*$", name, re.UNICODE),
@@ -194,7 +160,7 @@ def parse_wheel_filename(filename, validate_order = False):
     * `version`: the Version struct. Its `version_str` field is the version
       text exactly as it appears in the filename (e.g. `1.0.0.RC1`). For the
       normalized form (packaging's `str(version)`, e.g. `1.0.0rc1`), use
-      `canonicalize_version(version, strip_trailing_zero = False)`.
+      `version.to_string(version)`.
     * `build`: `()` or a `(number, suffix)` build tag tuple, e.g. `(1, "abc")`.
     * `tags`: a list of Tag structs, as returned by `tags.parse_tag`.
 
@@ -227,7 +193,7 @@ def parse_wheel_filename(filename, validate_order = False):
 
     name = canonicalize_name(name_part)
 
-    ver = _try_parse_version(parts[1])
+    ver = try_parse_version(parts[1])
     if ver == None:
         fail("Invalid wheel filename (invalid version): {}".format(repr(filename)))
 
@@ -274,7 +240,7 @@ def parse_sdist_filename(filename):
     * `name`: the project name, normalized with `canonicalize_name`.
     * `version`: the Version struct. Its `version_str` field is the version
       text exactly as it appears in the filename. For the normalized form, use
-      `canonicalize_version(version, strip_trailing_zero = False)`.
+      `version.to_string(version)`.
 
     Args:
         filename: The filename to parse.
@@ -299,7 +265,7 @@ def parse_sdist_filename(filename):
     version_part = file_stem[idx + 1:]
 
     name = canonicalize_name(name_part)
-    ver = _try_parse_version(version_part)
+    ver = try_parse_version(version_part)
     if ver == None:
         fail("Invalid sdist filename (invalid version): {}".format(repr(filename)))
 

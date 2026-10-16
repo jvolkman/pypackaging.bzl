@@ -5,8 +5,7 @@ packaging/_tokenizer.py (Apache 2.0 / BSD).
 Baseline: pypa/packaging 26.2
 """
 
-load("@re.bzl", "re")
-load("//pypackaging/private/specifiers:specifiers.bzl", "parse_specifier", "specifier_contains")
+load("//pypackaging/private/specifiers:specifiers.bzl", "specifier_contains", "try_parse_specifier")
 load("//pypackaging/private/utils:utils.bzl", "utils")
 
 # ---------------------------------------------------------------------------
@@ -477,51 +476,6 @@ _MARKERS_ALLOWING_SET = {
 
 _COLLECTION_TYPES = ("list", "tuple", "set", "dict")
 
-# Characters matched by Python's `\s` in the ASCII range, sorted.
-_PY_WS = "\t\n\013\014\r\034\035\036\037 "
-
-# Local, non-failing validators that mirror upstream's
-# `try: Specifier(op + value) except InvalidSpecifier` and the implicit
-# `Version(...)` parse in `Specifier.contains` (see `_eval_item`). They follow
-# `packaging.specifiers.Specifier._regex` and `packaging.version.VERSION_PATTERN`.
-# TODO: switch to non-failing parse helpers from specifiers.bzl / version.bzl
-# once those exist.
-_PRE = r"(?:[-_.]?(?:alpha|beta|preview|pre|a|b|c|rc)[-_.]?[0-9]*)?"
-_POST = r"(?:-[0-9]+|[-_.]?(?:post|rev|r)[-_.]?[0-9]*)?"
-_DEV = r"(?:[-_.]?dev[-_.]?[0-9]*)?"
-_LOCAL = r"(?:\+[a-z0-9]+(?:[-_.][a-z0-9]+)*)?"
-_RELEASE = r"v?(?:[0-9]+!)?[0-9]+(?:\.[0-9]+)*"
-
-_SPECIFIER_RE = re.compile(
-    r"\s*(?:" +
-    r"===\s*[^\s;)]*" +
-    r"|(?:==|!=)\s*" + _RELEASE + r"(?:\.\*|" + _PRE + _POST + _DEV + _LOCAL + r")?" +
-    r"|~=\s*v?(?:[0-9]+!)?[0-9]+(?:\.[0-9]+)+" + _PRE + _POST + _DEV +
-    r"|(?:<=|>=|<|>)\s*" + _RELEASE + _PRE + _POST + _DEV +
-    r")\s*",
-    re.I,
-)
-
-_VERSION_RE = re.compile(_RELEASE + _PRE + _POST + _DEV + _LOCAL, re.I)
-
-_DIGITS_AND_DOT = ".0123456789"
-
-def _is_plain_release(s):
-    return s != "" and not s.lstrip(_DIGITS_AND_DOT) and "" not in s.split(".")
-
-def _is_valid_specifier(spec_str):
-    # Fast path for the common `<op><digits and dots>` form.
-    for op in _OPS:
-        if spec_str.startswith(op):
-            rest = spec_str[len(op):]
-            if _is_plain_release(rest) and (op != "~=" or "." in rest):
-                return True
-            break
-    return _SPECIFIER_RE.fullmatch(spec_str) != None
-
-def _is_valid_version(s):
-    return _is_plain_release(s) or _VERSION_RE.fullmatch(s) != None
-
 def _env_lookup(environment, key, item):
     value = environment.get(key)
     if value == None:
@@ -590,15 +544,11 @@ def _eval_item(item, environment):
     # Upstream `_eval_op`: version comparison when `op + rhs` is a valid
     # specifier; otherwise fall through to the string operator table.
     if key in _MARKERS_REQUIRING_VERSION and type(rhs_val) == "string" and op != "in" and op != "not in":
-        spec_str = op + rhs_val
-        if _is_valid_specifier(spec_str):
-            spec = parse_specifier(spec_str)
-            if spec.operator == "===":
-                return specifier_contains(spec, lhs_val)
-            stripped = lhs_val.strip(_PY_WS)
-            if not _is_valid_version(stripped):
-                return False
-            return specifier_contains(spec, stripped)
+        spec = try_parse_specifier(op + rhs_val)
+        if spec != None:
+            # Like upstream `spec.contains(lhs, prereleases=True)`: an invalid
+            # version is False (only `===` compares it as a string).
+            return specifier_contains(spec, lhs_val)
 
     if op == "in":
         return lhs_val in rhs_val

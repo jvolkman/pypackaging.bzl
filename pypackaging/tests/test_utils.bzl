@@ -110,6 +110,7 @@ def _test_canonicalize_version_impl(env, _target):
         # Leading and trailing whitespace is ignored.
         ("  1.0  ", "1", "1.0"),
         ("\t1.0.0\n", "1", "1.0.0"),
+        ("\302\2401.0\342\200\203", "1", "1.0"),  # U+00A0, U+2003
         # Invalid versions are returned unchanged.
         ("invalid", "invalid", "invalid"),
         ("foo bar baz", "foo bar baz", "foo bar baz"),

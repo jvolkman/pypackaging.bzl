@@ -216,6 +216,12 @@ def _test_version_marker_fallback_impl(env, _target):
     env.expect.that_bool(_eval("python_version === '3.12.0'")).equals(False)
     env.expect.that_bool(_eval("python_version === ' 3.12'")).equals(True)
 
+    # Unicode whitespace around versions is ignored, like Python's str.strip().
+    env.expect.that_bool(_eval("python_version == '\302\2403.12'")).equals(True)
+    env.expect.that_bool(_eval("python_version == '3.12'", python_version = "3.12\302\240")).equals(True)
+    env.expect.that_bool(_eval("python_version >= '3.8'", python_version = " 3.9 ")).equals(True)
+    env.expect.that_bool(_eval("python_version > '\302\240x'")).equals(False)
+
     # The value is appended to the operator before parsing, like upstream.
     env.expect.that_bool(_eval("python_version < '=3.12'")).equals(True)
     env.expect.that_bool(_eval("python_version == '=3.12'")).equals(True)

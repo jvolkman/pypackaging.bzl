@@ -26,23 +26,34 @@ load(
     "//pypackaging/private/version:version.bzl",
     "contains_whitespace",
     "get_public_key",
+    "lstrip_whitespace",
+    "match_version_prefix",
     "parse_stripped_version",
     "strip_whitespace",
     "try_parse_version",
     "version_key",
     "version_to_string",
+    "whitespace_len_at",
 )
 
 def _fail_invalid_specifier(spec):
     fail("Invalid specifier: {}".format(spec))
 
-def _try_parse_specifier(spec_str):
+def try_parse_specifier(spec_str):
     """Parses a specifier, returning None if it is invalid.
+
+    Internal helper (e.g. for markers.bzl); not part of the public API.
 
     The version is parsed once here and validated structurally: the specifier
     grammar is the PEP 440 version grammar, minus local versions for ordered
     comparisons and ~=, plus a trailing `.*` on a bare release for == and !=,
     and with at least two release segments for ~=.
+
+    Args:
+        spec_str: The specifier string to parse.
+
+    Returns:
+        A specifier struct (see `parse_specifier`), or None.
     """
     stripped = strip_whitespace(spec_str)
     if stripped.startswith("==="):
@@ -90,10 +101,50 @@ def parse_specifier(spec_str):
         * `parsed_version`: the parsed version (see `version.parse`), without
           the `.*` suffix for wildcard specifiers. None for `===`.
     """
-    spec = _try_parse_specifier(spec_str)
+    spec = try_parse_specifier(spec_str)
     if spec == None:
         _fail_invalid_specifier(spec_str)
     return spec
+
+# Operators in the order of the alternatives in packaging's specifier regex.
+_TOKEN_OPERATORS = ("==", "!=", "~=", "<=", ">=", "<", ">")
+
+def match_specifier_token(s):
+    """Matches packaging's SPECIFIER token at the start of `s`.
+
+    Internal helper for the requirement tokenizer; not part of the public API.
+    This is an unanchored match of `Specifier._specifier_regex_str` (without
+    surrounding whitespace), so it never looks past the end of the token.
+
+    Args:
+        s: The string to match.
+
+    Returns:
+        The length of the token, or 0 if `s` doesn't start with a specifier.
+    """
+    if s.startswith("==="):
+        # ===\s*[^\s;)]*
+        rest = lstrip_whitespace(s[3:])
+        end = 0
+        for _ in range(len(rest)):
+            if rest[end] in ";)" or whitespace_len_at(rest, end):
+                break
+            end += 1
+        return len(s) - len(rest) + end
+
+    for op in _TOKEN_OPERATORS:
+        if s.startswith(op):
+            rest = lstrip_whitespace(s[len(op):])
+            if op == "==" or op == "!=":
+                n = match_version_prefix(rest, allow_local = True, allow_wildcard = True)
+            elif op == "~=":
+                n = match_version_prefix(rest, allow_local = False, min_release_len = 2)
+            else:
+                n = match_version_prefix(rest, allow_local = False)
+            if not n:
+                return 0
+            return len(s) - len(rest) + n
+    return 0
 
 def _spec_version(spec):
     """Returns the parsed version of a non-=== specifier."""

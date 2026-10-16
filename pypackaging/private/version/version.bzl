@@ -213,6 +213,47 @@ def contains_whitespace(s):
             return True
     return False
 
+def whitespace_len_at(s, pos):
+    """Returns the length of the whitespace character at `s[pos]`, or 0.
+
+    Like Python's `\\s`, this matches ASCII whitespace and UTF-8 encoded
+    Unicode whitespace (which is more than one character long in Bazel).
+
+    Args:
+        s: The string to check.
+        pos: The position to check.
+
+    Returns:
+        The number of characters of the whitespace character, or 0 if there
+        is none at `pos`.
+    """
+    if pos >= len(s):
+        return 0
+    c = s[pos]
+    if c < "\200":
+        return 1 if c in _ASCII_WHITESPACE else 0
+    if s.startswith(_UNICODE_WHITESPACE, pos):
+        for ws in _UNICODE_WHITESPACE:
+            if s.startswith(ws, pos):
+                return len(ws)
+    return 0
+
+def lstrip_whitespace(s):
+    """Removes leading whitespace like Python's `str.lstrip()`.
+
+    Args:
+        s: The string to strip.
+
+    Returns:
+        The string without leading ASCII or UTF-8 encoded Unicode whitespace.
+    """
+    for _ in range(len(s)):
+        n = whitespace_len_at(s, 0)
+        if not n:
+            break
+        s = s[n:]
+    return s
+
 def parse_version(version_str):
     """Parses a version string into a struct.
 
@@ -301,8 +342,12 @@ def _take_number(s):
         return int(digits), rest
     return None, t
 
-def _parse_version_full(version_str):
-    s = version_str.lower()
+def _scan_release(s):
+    """Matches `v?(?:[0-9]+!)?[0-9]+(?:\\.[0-9]+)*` at the start of lowercase `s`.
+
+    Returns:
+        (epoch, release tuple, rest), or None if there is no match.
+    """
     if s.startswith("v"):
         s = s[1:]
 
@@ -311,10 +356,10 @@ def _parse_version_full(version_str):
         return None
     epoch = 0
     if s.startswith("!"):
-        epoch = int(digits)
-        digits, s = _split_digits(s[1:])
-        if not digits:
-            return None
+        rest_digits, rest = _split_digits(s[1:])
+        if rest_digits:
+            epoch = int(digits)
+            digits, s = rest_digits, rest
 
     release = [int(digits)]
     for _ in range(len(s)):
@@ -322,7 +367,38 @@ def _parse_version_full(version_str):
             break
         digits, s = _split_digits(s[1:])
         release.append(int(digits))
+    return epoch, tuple(release), s
 
+def _scan_local(s):
+    """Matches `[a-z0-9]+(?:[._-][a-z0-9]+)*` at the start of lowercase `s`.
+
+    Returns:
+        (local tuple or None, rest).
+    """
+    local = []
+    for _ in range(len(s)):
+        rest = s.lstrip(_LOCAL_CHARS)
+        part = s[:len(s) - len(rest)]
+        if not part:
+            break
+        local.append(int(part) if not part.lstrip(_DIGITS) else part)
+        s = rest
+        if not (s.startswith(_SEPARATORS) and s[1:2] and s[1:2] in _LOCAL_CHARS):
+            break
+        s = s[1:]
+    if not local:
+        return None, s
+    return tuple(local), s
+
+def _scan_suffix(s, allow_local):
+    """Matches the pre, post, dev (and optionally local) parts of a version.
+
+    Every optional part is taken greedily, like the regex, at the start of
+    lowercase `s`.
+
+    Returns:
+        (pre, post, dev, local, rest).
+    """
     pre = None
     label, s = _take_label(s, _PRE_LABELS)
     if label != None:
@@ -346,20 +422,50 @@ def _parse_version_full(version_str):
         dev = ("dev", number or 0)
 
     local = None
-    if s.startswith("+"):
-        parts = s[1:].replace("_", ".").replace("-", ".").split(".")
-        local = []
-        for part in parts:
-            if not part or part.lstrip(_LOCAL_CHARS):
-                return None
-            local.append(int(part) if not part.lstrip(_DIGITS) else part)
-        local = tuple(local)
-        s = ""
+    if allow_local and s.startswith("+"):
+        local, rest = _scan_local(s[1:])
+        if local != None:
+            s = rest
 
+    return pre, post, dev, local, s
+
+def _parse_version_full(version_str):
+    m = _scan_release(version_str.lower())
+    if m == None:
+        return None
+    epoch, release, s = m
+    pre, post, dev, local, s = _scan_suffix(s, True)
     if s:
         return None
+    return make_version(epoch, release, pre, post, dev, local, version_str)
 
-    return make_version(epoch, tuple(release), pre, post, dev, local, version_str)
+def match_version_prefix(s, allow_local = True, allow_wildcard = False, min_release_len = 1):
+    """Matches a PEP 440 version at the start of `s`, like an unanchored regex.
+
+    Internal helper for the requirement tokenizer; not part of the public API.
+    It follows the version part of packaging's specifier regex: no surrounding
+    whitespace, and every optional part is taken greedily.
+
+    Args:
+        s: The string to match (case-insensitive).
+        allow_local: Whether a `+local` segment may follow.
+        allow_wildcard: Whether a `.*` suffix may follow the release segment,
+            instead of the pre/post/dev/local parts.
+        min_release_len: The minimum number of release segments.
+
+    Returns:
+        The length of the match, or 0 if there is none.
+    """
+    m = _scan_release(s.lower())
+    if m == None:
+        return 0
+    _epoch, release, rest = m
+    if len(release) < min_release_len:
+        return 0
+    if allow_wildcard and rest.startswith(".*"):
+        return len(s) - len(rest) + 2
+    _pre, _post, _dev, _local, rest = _scan_suffix(rest, allow_local)
+    return len(s) - len(rest)
 
 def version_to_string(v):
     """Returns the normalized string form of a parsed version.
