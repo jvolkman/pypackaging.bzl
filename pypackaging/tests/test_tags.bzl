@@ -1,4 +1,4 @@
-"""Tests for platform_tags.bzl."""
+"""Tests for tags.bzl."""
 
 load("@rules_testing//lib:analysis_test.bzl", "analysis_test", "test_suite")
 load("@rules_testing//lib:truth.bzl", "matching")
@@ -12,6 +12,9 @@ load("//pypackaging/private/tags:manylinux.bzl", "manylinux_platforms")
 
 # buildifier: disable=bzl-visibility
 load("//pypackaging/private/tags:tags.bzl", "get_supported", "parse_tag", "priority_map", "select_compatible", "tag_str", "tags_internal")
+
+# buildifier: disable=bzl-visibility
+load("//pypackaging/private/tags:utils.bzl", "get_python_version")
 
 def _parse_tag_subject_impl(ctx):
     parse_tag(ctx.attr.tag, validate_order = ctx.attr.validate_order)
@@ -525,6 +528,26 @@ def _test_select_compatible(name):
     util.helper_target(native.filegroup, name = name + "_subject")
     analysis_test(name = name, target = name + "_subject", impl = _test_select_compatible_impl)
 
+def _test_get_python_version_impl(env, _target):
+    env.expect.that_bool(get_python_version("311") == (3, 11)).equals(True)
+    env.expect.that_bool(get_python_version("27") == (2, 7)).equals(True)
+    env.expect.that_bool(get_python_version("3") == (3,)).equals(True)
+    env.expect.that_bool(get_python_version("3100") == (3, 100)).equals(True)
+
+    # A major-only version gets only user ABIs, none, and py3 tags.
+    tags = get_supported(version = "3", platforms = ["any"], impl = "cp", abis = ["cp3"])
+    env.expect.that_collection(tags).contains_exactly([
+        "cp3-cp3-any",
+        "cp3-none-any",
+        "py3-none-any",
+        "cp3-none-any",
+        "py3-none-any",
+    ]).in_order()
+
+def _test_get_python_version(name):
+    util.helper_target(native.filegroup, name = name + "_subject")
+    analysis_test(name = name, target = name + "_subject", impl = _test_get_python_version_impl)
+
 def tags_test_suite(name):
     test_suite(
         name = name,
@@ -556,5 +579,6 @@ def tags_test_suite(name):
             _test_expand_hyphen_normalization,
             _test_priority_map,
             _test_select_compatible,
+            _test_get_python_version,
         ],
     )
