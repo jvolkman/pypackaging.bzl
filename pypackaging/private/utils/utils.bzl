@@ -12,7 +12,14 @@ _UPPER = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 _DIGITS = "0123456789"
 _VALID_NORMALIZED_START = _LOWER + _DIGITS
 _VALID_NORMALIZED_CHAR = _VALID_NORMALIZED_START + "-"
-_VALID_WHEEL_NAME_CHARS = _LOWER + _UPPER + _DIGITS + "._"
+
+# ASCII characters not matched by packaging's r"[\w\d._]" (re.UNICODE): ASCII
+# control characters, space and punctuation other than "_" and ".".
+_INVALID_ASCII_WHEEL_NAME_CHARS = (
+    "\000\001\002\003\004\005\006\007\010\011\012\013\014\015\016\017" +
+    "\020\021\022\023\024\025\026\027\030\031\032\033\034\035\036\037" +
+    "\177 !\"#$%&'()*+,-/:;<=>?@[\\]^`{|}~"
+)
 _VALID_NAME_START = _LOWER + _UPPER + _DIGITS
 _VALID_NAME_CHAR = _VALID_NAME_START + "._-"
 
@@ -167,38 +174,56 @@ def canonicalize_version(version_input, strip_trailing_zero = True):
 
     return version_str
 
+def _is_valid_wheel_name(name):
+    # Equivalent to packaging's re.match(r"^[\w\d._]*$", name, re.UNICODE),
+    # except that every non-ASCII character is accepted: Starlark can't tell
+    # Unicode letters and digits from other characters.
+
+    # buildifier: disable=string-iteration
+    for c in name.elems():
+        if c in _INVALID_ASCII_WHEEL_NAME_CHARS:
+            return False
+    return True
+
 def parse_wheel_filename(filename, validate_order = False):
     """Parses the filename of a wheel file.
 
+    The returned struct has these fields:
+
+    * `name`: the project name, normalized with `canonicalize_name`.
+    * `version`: the Version struct. Its `version_str` field is the version
+      text exactly as it appears in the filename (e.g. `1.0.0.RC1`). For the
+      normalized form (packaging's `str(version)`, e.g. `1.0.0rc1`), use
+      `canonicalize_version(version, strip_trailing_zero = False)`.
+    * `build`: `()` or a `(number, suffix)` build tag tuple, e.g. `(1, "abc")`.
+    * `tags`: a list of Tag structs, as returned by `tags.parse_tag`.
+
+    Like packaging, the project name may contain non-ASCII characters. Any
+    non-ASCII character is accepted, where packaging only accepts Unicode
+    word characters.
+
     Args:
         filename: The filename to parse.
-        validate_order: Whether to validate tag order.
+        validate_order: Whether to fail if compressed tag set components
+            aren't in sorted order (PEP 425).
 
     Returns:
         A struct containing name, version, build, and tags.
     """
     if not filename.endswith(".whl"):
-        fail("Invalid wheel filename (extension must be '.whl'): {}".format(filename))
+        fail("Invalid wheel filename (extension must be '.whl'): {}".format(repr(filename)))
 
     filename = filename[:-4]
     dashes = filename.count("-")
     if dashes not in (4, 5):
-        fail("Invalid wheel filename (wrong number of parts): {}".format(filename))
+        fail("Invalid wheel filename (wrong number of parts): {}".format(repr(filename)))
 
     parts = filename.split("-", dashes - 2)
     name_part = parts[0]
 
-    # Equivalent to regex: ^[\w._]*$
-    is_valid_wheel_name = True
-
-    # buildifier: disable=string-iteration
-    for c in name_part.elems():
-        if c not in _VALID_WHEEL_NAME_CHARS:
-            is_valid_wheel_name = False
-            break
-
-    if "__" in name_part or not is_valid_wheel_name:
-        fail("Invalid project name in filename: {}".format(filename))
+    # See PEP 427 for the rules on escaping the project name.
+    if "__" in name_part or not _is_valid_wheel_name(name_part):
+        fail("Invalid project name: {}".format(repr(filename)))
 
     name = canonicalize_name(name_part)
 
@@ -211,7 +236,7 @@ def parse_wheel_filename(filename, validate_order = False):
 
         # Equivalent to regex: ^(\d+)(.*)$
         if not build_part or build_part[0] not in _DIGITS:
-            fail("Invalid build number: {} in {}".format(build_part, filename))
+            fail("Invalid build number: {} in {}".format(build_part, repr(filename)))
 
         i = 0
 
@@ -227,7 +252,12 @@ def parse_wheel_filename(filename, validate_order = False):
         build = ()
 
     tag_str = parts[-1]
-    parsed_tags = tags.parse_tag(tag_str, validate_order = validate_order)
+    if validate_order:
+        for component in tag_str.split("-"):
+            component_parts = component.split(".")
+            if component_parts != sorted(component_parts):
+                fail("Invalid wheel filename (compressed tag set components must be in sorted order per PEP 425): {}".format(repr(filename)))
+    parsed_tags = tags.parse_tag(tag_str)
 
     return struct(
         name = name,
@@ -238,6 +268,13 @@ def parse_wheel_filename(filename, validate_order = False):
 
 def parse_sdist_filename(filename):
     """Parses the filename of a sdist file.
+
+    The returned struct has these fields:
+
+    * `name`: the project name, normalized with `canonicalize_name`.
+    * `version`: the Version struct. Its `version_str` field is the version
+      text exactly as it appears in the filename. For the normalized form, use
+      `canonicalize_version(version, strip_trailing_zero = False)`.
 
     Args:
         filename: The filename to parse.
@@ -250,12 +287,13 @@ def parse_sdist_filename(filename):
     elif filename.endswith(".zip"):
         file_stem = filename[:-4]
     else:
-        fail("Invalid sdist filename (extension must be '.tar.gz' or '.zip'): {}".format(filename))
+        fail("Invalid sdist filename (extension must be '.tar.gz' or '.zip'): {}".format(repr(filename)))
 
-    # Starlark doesn't have rpartition. We can simulate it.
+    # We are requiring a PEP 440 version, which cannot contain dashes,
+    # so we split on the last dash.
     idx = file_stem.rfind("-")
     if idx == -1:
-        fail("Invalid sdist filename: {}".format(filename))
+        fail("Invalid sdist filename: {}".format(repr(filename)))
 
     name_part = file_stem[:idx]
     version_part = file_stem[idx + 1:]
