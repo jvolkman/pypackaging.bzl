@@ -2,6 +2,17 @@
 
 Derived from pypa/packaging: packaging/version.py (Apache 2.0 / BSD).
 Baseline: pypa/packaging 26.2
+
+Differences from `packaging.version.Version`:
+
+* A version is a struct. Compare versions through their `key` field, and use
+  `to_string` for the normalized string (`str(Version)`).
+* `pre`, `post` and `dev` are tuples such as `("rc", 1)`, `("post", 2)` and
+  `("dev", 3)` rather than a tuple and two ints.
+* The `public`, `base_version`, `major`, `minor` and `micro` properties are
+  not provided; derive them from the struct fields.
+* `parse` fails on invalid input, since Starlark has no exceptions. Use
+  `try_parse` to get None instead.
 """
 
 def _fail_invalid_version(version):

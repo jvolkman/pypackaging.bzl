@@ -2,6 +2,24 @@
 
 Derived from pypa/packaging: packaging/specifiers.py (Apache 2.0 / BSD).
 Baseline: pypa/packaging 26.2
+
+Differences from `packaging.specifiers`:
+
+* `~=` derives its prefix from the normalized specifier version, as PEP 440
+  says: `~=1.0c1` is `>=1.0c1, ==1.*` and `~=v1.0` is `>=1.0, ==1.*`.
+  packaging 26.2 derives it from the raw string, so it treats unusual
+  spellings such as `~=1.0c1`, `~=1.0.r1` or `~=1.0.RC1` as `==1.0.*`, and
+  `~=v1.0` matches nothing.
+* Specifiers and sets are immutable structs, so there is no constructor-level
+  `prereleases` argument; pass `prereleases` to `contains`, `set_contains`,
+  `filter` or `set_filter` instead, which gives the same results.
+* `filter` and `set_filter` take no `key` argument. Set operations (`&`),
+  `is_unsatisfiable` and string normalization (`str()`) are not provided, and
+  struct equality compares specifiers as written (upstream considers `==1.0`
+  and `==1` equal).
+* `===` compares case-insensitively using ASCII case folding only.
+* `parse` and `parse_set` fail on invalid input, since Starlark has no
+  exceptions.
 """
 
 load(
