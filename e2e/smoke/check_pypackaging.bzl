@@ -31,7 +31,7 @@ def _check_version():
     _check(version.parse("1.2.3").release == (1, 2, 3), "version.parse('1.2.3').release")
 
     # Ordered PEP 440 versions. All but the plain release go through the
-    # regex-based parser rather than the digits-only fast path.
+    # full parser rather than the digits-only fast path.
     ordered = ["1.0.dev0", "1.0a1", "1.0rc1", "1.0", "1.0.post1", "1.1", "1!0.1"]
     keys = [version.parse(v).key for v in ordered]
     for i in range(len(keys) - 1):
