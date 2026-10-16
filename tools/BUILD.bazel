@@ -6,6 +6,10 @@ load("@bazelrc-preset.bzl", "bazelrc_preset")
 
 package(default_visibility = ["//visibility:public"])
 
+# The preset is generated for the Bazel version in .bazelversion, so its
+# update test fails on any other version. It's tagged manual; CI runs it
+# explicitly on the pinned version.
 bazelrc_preset(
     name = "preset",
+    tags = ["manual"],
 )
