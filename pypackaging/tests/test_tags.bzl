@@ -15,6 +15,7 @@ load("//pypackaging/private/tags:tags.bzl", "get_supported", "parse_tag", "prior
 
 # buildifier: disable=bzl-visibility
 load("//pypackaging/private/tags:utils.bzl", "get_python_version")
+load(":get_supported_fixtures.bzl", "GET_SUPPORTED_FIXTURES")
 
 def _parse_tag_subject_impl(ctx):
     parse_tag(ctx.attr.tag, validate_order = ctx.attr.validate_order)
@@ -524,6 +525,9 @@ def _test_select_compatible_impl(env, _target):
     env.expect.that_collection(select_compatible(["py3-none-any"], [("a", ["py2-none-any"]), ("b", ["PY3-none-any"])])).contains_exactly(["b"])
     env.expect.that_collection(select_compatible(supported, [("a", ["cp311-cp311-win_amd64"])])).contains_exactly([])
 
+    # Compressed tag strings are expanded.
+    env.expect.that_collection(select_compatible(["py3-none-any"], [("a", ["py2.py3-none-any"])])).contains_exactly(["a"])
+
 def _test_select_compatible(name):
     util.helper_target(native.filegroup, name = name + "_subject")
     analysis_test(name = name, target = name + "_subject", impl = _test_select_compatible_impl)
@@ -560,6 +564,19 @@ def _test_get_supported_no_platforms(name):
     util.helper_target(native.filegroup, name = name + "_subject")
     analysis_test(name = name, target = name + "_subject", impl = _test_get_supported_no_platforms_impl)
 
+def _test_get_supported_fixtures_impl(env, _target):
+    # Expected values come from packaging 26.2 with pip 25.2's get_supported
+    # wrapper (and packaging's own linux expansion for manylinux/musllinux).
+    for f in GET_SUPPORTED_FIXTURES:
+        supported = get_supported(version = f.version, platforms = f.platforms, impl = f.impl, abis = f.abis)
+        env.expect.where(case = f.name).that_int(len(supported)).equals(f.count)
+        env.expect.where(case = f.name).that_collection(supported[:len(f.head)]).contains_exactly(f.head).in_order()
+        env.expect.where(case = f.name).that_int(hash(" ".join(supported))).equals(f.hash)
+
+def _test_get_supported_fixtures(name):
+    util.helper_target(native.filegroup, name = name + "_subject")
+    analysis_test(name = name, target = name + "_subject", impl = _test_get_supported_fixtures_impl)
+
 def tags_test_suite(name):
     test_suite(
         name = name,
@@ -593,5 +610,6 @@ def tags_test_suite(name):
             _test_select_compatible,
             _test_get_python_version,
             _test_get_supported_no_platforms,
+            _test_get_supported_fixtures,
         ],
     )

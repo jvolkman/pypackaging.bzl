@@ -319,6 +319,8 @@ def select_compatible(supported, tagged):
             calling this repeatedly with the same supported tags.
         tagged: A list of `(thing, tags)` tuples, where `tags` is a list of Tag
             structs (e.g. `parse_wheel_filename(f).tags`) or tag strings.
+            Compressed tag strings such as `py2.py3-none-any` are expanded
+            with `parse_tag`.
 
     Returns:
         The compatible things, best match first.
@@ -329,9 +331,14 @@ def select_compatible(supported, tagged):
     for thing, thing_tags in tagged:
         best = None
         for t in thing_tags:
-            rank = ranks.get(_tag_key(t))
-            if rank != None and (best == None or rank < best):
-                best = rank
+            if type(t) == "string" and "." in t:
+                keys = [tag_str(x) for x in parse_tag(t)]
+            else:
+                keys = [_tag_key(t)]
+            for key in keys:
+                rank = ranks.get(key)
+                if rank != None and (best == None or rank < best):
+                    best = rank
         if best != None:
             ranked.append((best, len(things)))
             things.append(thing)
