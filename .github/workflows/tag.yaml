@@ -6,6 +6,7 @@ on:
   #   - cron: "0 15 * * *" # Daily at 3PM UTC
 jobs:
   tag:
+    if: github.ref == 'refs/heads/main'
     permissions:
       contents: write # allow create tag
     runs-on: ubuntu-latest
@@ -15,7 +16,7 @@ jobs:
       new-tag-version-type: ${{ steps.ccv.outputs.new-tag-version-type }}
       recently-tagged: ${{ steps.recent-tag.outputs.recently-tagged }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
       - name: Check if there is a recent tag

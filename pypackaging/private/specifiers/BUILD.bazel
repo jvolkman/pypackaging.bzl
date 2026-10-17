@@ -1,12 +1,14 @@
 load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
 
-package(default_visibility = ["//visibility:public"])
+# Implementation details. Consumers must load the public entrypoint
+# //:pypackaging.bzl and depend on the //:pypackaging bzl_library.
+package(default_visibility = [
+    "//:__pkg__",
+    "//pypackaging/private:__subpackages__",
+])
 
 bzl_library(
     name = "specifiers",
     srcs = ["specifiers.bzl"],
-    deps = [
-        "//pypackaging/private/version",
-        "@re.bzl//:re",
-    ],
+    deps = ["//pypackaging/private/version"],
 )

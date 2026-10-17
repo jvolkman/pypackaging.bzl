@@ -4,6 +4,8 @@ Derived from pypa/packaging: packaging/_musllinux.py (Apache 2.0 / BSD).
 See README.md for details.
 """
 
+visibility(["//", "//pypackaging/..."])
+
 def musllinux_platforms(version, arch):
     """Generates musllinux platforms.
 

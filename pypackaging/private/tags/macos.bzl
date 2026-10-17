@@ -4,6 +4,8 @@ Derived from pypa/packaging: packaging/tags.py (Apache 2.0 / BSD).
 See README.md for details.
 """
 
+visibility(["//", "//pypackaging/..."])
+
 def _mac_binary_formats(version, cpu_arch):
     formats = [cpu_arch]
     if cpu_arch == "x86_64":

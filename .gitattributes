@@ -4,10 +4,19 @@ docs/*.md linguist-generated=true
 #################################
 # Configuration for 'git archive'
 # See https://git-scm.com/docs/git-archive#ATTRIBUTES
-
-# Don't include examples in the distribution artifact, to reduce size.
-# You may want to add additional exclusions for folders or files that users don't need.
-examples export-ignore
-
-# Occasionally there's a need to "stamp" the release version into a file
-mylang/version.bzl export-subst
+#
+# `.github/workflows/release_prep.sh` builds the release archive with
+# `git archive`. Leave out development-only files. Several of them load
+# dev_dependency modules (rules_testing, bazelrc-preset.bzl, ...) that aren't
+# available when this module is used as a dependency, so they would break
+# `bazel build @pypackaging.bzl//...` for consumers.
+#
+# Keep e2e/: the BCR presubmit runs e2e/smoke as its test module.
+.bcr export-ignore
+.github export-ignore
+.pre-commit-config.yaml export-ignore
+.prettierignore export-ignore
+doc_extract export-ignore
+docs export-ignore
+pypackaging/tests export-ignore
+tools export-ignore

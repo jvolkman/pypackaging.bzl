@@ -4,17 +4,21 @@ Derived from pypa/packaging: packaging/tags.py (Apache 2.0 / BSD).
 See README.md for details.
 """
 
+visibility(["//", "//pypackaging/..."])
+
 def ios_platforms(major, minor, multiarch):
     """Generates iOS platforms.
 
     Args:
         major: The major version of iOS.
         minor: The minor version of iOS.
-        multiarch: The multiarch string.
+        multiarch: The multiarch string. Hyphens are replaced with underscores,
+            like packaging.
 
     Returns:
         A list of iOS platform strings.
     """
+    multiarch = multiarch.replace("-", "_")
     if major < 12:
         return []
 

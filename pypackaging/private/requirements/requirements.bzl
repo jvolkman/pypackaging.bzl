@@ -1,147 +1,327 @@
 """PEP 508 Dependency Specification Parsing.
 
-Derived from pypa/packaging: packaging/requirements.py (Apache 2.0 / BSD).
+Derived from pypa/packaging: packaging/requirements.py and packaging/_parser.py
+(Apache 2.0 / BSD).
+Baseline: pypa/packaging 26.2
 """
 
-load("//pypackaging/private/markers:markers.bzl", "markers")
-load("//pypackaging/private/specifiers:specifiers.bzl", "specifiers")
+load(
+    "//pypackaging/private/markers:markers.bzl",
+    "at_end",
+    "is_word_char",
+    "markers",
+    "parse_marker_expression",
+    "skip_ws",
+    "syntax_error",
+)
+load("//pypackaging/private/specifiers:specifiers.bzl", "match_specifier_token", "specifiers")
 load("//pypackaging/private/utils:utils.bzl", "utils")
+load("//pypackaging/private/version:version.bzl", "strip_whitespace")
 
-def _make_requirement(name, url, extras, specifier, marker, req_str = ""):
+visibility(["//", "//pypackaging/..."])
+
+_IDENTIFIER_START = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+_IDENTIFIER_CHARS = _IDENTIFIER_START + "._-"
+
+# Upstream VERSION_LOCAL_LABEL_TRAIL is `\+[a-z0-9]+(?:[-_.][a-z0-9]+)*`
+# (case-sensitive); it matches iff "+" is followed by one of these.
+_LOCAL_LABEL_START = "abcdefghijklmnopqrstuvwxyz0123456789"
+
+def _match_identifier(src, pos):
+    """Matches upstream IDENTIFIER (`\\b[a-zA-Z0-9][a-zA-Z0-9._-]*\\b`).
+
+    Returns:
+        The end position of the match, or None.
+    """
+    n = len(src)
+    if pos >= n or src[pos] not in _IDENTIFIER_START:
+        return None
+    if pos > 0 and is_word_char(src[pos - 1]):
+        return None
+    end = pos + 1
+    for _ in range(n - end):
+        if src[end] in _IDENTIFIER_CHARS:
+            end += 1
+        else:
+            break
+
+    # Backtrack until the match ends on a word boundary.
+    for _ in range(end - pos):
+        if is_word_char(src[end - 1]) and (end == n or not is_word_char(src[end])):
+            return end
+        end -= 1
+    return None
+
+def _parse_requirement_marker(ctx, pos, span_start, expected):
+    """requirement_marker = SEMICOLON marker WS?"""
+    src = ctx.src
+    if pos >= len(src) or src[pos] != ";":
+        syntax_error(ctx, "Expected {} or end".format(expected), span_start, pos)
+    pos += 1
+    marker_start = pos
+    marker, pos = parse_marker_expression(ctx, pos)
+    pos = skip_ws(src, pos)
+    return marker, src[marker_start:pos].strip(" \t"), pos
+
+def _parse(req_str):
+    """Parses a requirement string following upstream's grammar.
+
+    Returns:
+        A struct with the raw (unnormalized) parts.
+    """
+    ctx = struct(src = req_str, label = "Invalid requirement")
+    src = req_str
+    n = len(src)
+
+    # requirement = WS? IDENTIFIER WS? extras WS? requirement_details END
+    pos = skip_ws(src, 0)
+    end = _match_identifier(src, pos)
+    if end == None:
+        syntax_error(ctx, "Expected package name at the start of dependency specifier", pos)
+    name = src[pos:end]
+    pos = skip_ws(src, end)
+
+    # extras = (LEFT_BRACKET WS? extras_list? WS? RIGHT_BRACKET)?
+    extras = []
+    if pos < n and src[pos] == "[":
+        open_pos = pos
+        pos = skip_ws(src, pos + 1)
+
+        # extras_list = IDENTIFIER (WS? COMMA WS? IDENTIFIER)*
+        end = _match_identifier(src, pos)
+        if end != None:
+            extras.append(src[pos:end])
+            pos = end
+            for _ in range(n):
+                pos = skip_ws(src, pos)
+                if _match_identifier(src, pos) != None:
+                    syntax_error(ctx, "Expected comma between extra names", pos)
+                if pos >= n or src[pos] != ",":
+                    break
+                pos = skip_ws(src, pos + 1)
+                end = _match_identifier(src, pos)
+                if end == None:
+                    syntax_error(ctx, "Expected extra name after comma", pos)
+                extras.append(src[pos:end])
+                pos = end
+        pos = skip_ws(src, pos)
+        if pos >= n or src[pos] != "]":
+            syntax_error(ctx, "Expected matching RIGHT_BRACKET for LEFT_BRACKET, after extras", open_pos, pos)
+        pos += 1
+    pos = skip_ws(src, pos)
+
+    # requirement_details = AT URL (WS requirement_marker?)?
+    #                     | specifier WS? (requirement_marker)?
+    url = None
+    specs = []
+    marker = None
+    marker_str = None
+    if pos < n and src[pos] == "@":
+        pos = skip_ws(src, pos + 1)
+        url_start = pos
+        end = pos
+        for _ in range(n - pos):
+            if src[end] not in " \t":
+                end += 1
+            else:
+                break
+        if end == pos:
+            syntax_error(ctx, "Expected URL after @", pos)
+        url = src[pos:end]
+        pos = end
+        if not at_end(src, pos):
+            # Upstream expects WS here. The URL runs up to a space or tab, so
+            # this can't fail; it is kept as an assertion.
+            if src[pos] not in " \t":
+                syntax_error(ctx, "Expected whitespace after URL", pos)
+            pos = skip_ws(src, pos)
+            if not at_end(src, pos):
+                marker, marker_str, pos = _parse_requirement_marker(
+                    ctx,
+                    pos,
+                    url_start,
+                    "semicolon (after URL and whitespace)",
+                )
+    else:
+        # specifier = LEFT_PARENTHESIS WS? version_many WS? RIGHT_PARENTHESIS
+        #           | WS? version_many WS?
+        specifier_start = pos
+        paren_pos = None
+        if pos < n and src[pos] == "(":
+            paren_pos = pos
+            pos += 1
+        pos = skip_ws(src, pos)
+
+        # version_many = (SPECIFIER (WS? COMMA WS? SPECIFIER)*)?
+        # (a trailing comma is accepted, like upstream)
+        for _ in range(n):
+            token_len, spec = match_specifier_token(src[pos:])
+            if not token_len:
+                break
+            token_start = pos
+            pos += token_len
+            specs.append(spec)
+            if src.startswith(".*", pos):
+                syntax_error(ctx, ".* suffix can only be used with `==` or `!=` operators", token_start, pos + 1)
+            if src.startswith("+", pos) and src[pos + 1:pos + 2] and src[pos + 1] in _LOCAL_LABEL_START:
+                syntax_error(ctx, "Local version label can only be used with `==` or `!=` operators", token_start, pos)
+            pos = skip_ws(src, pos)
+            if pos >= n or src[pos] != ",":
+                break
+            pos = skip_ws(src, pos + 1)
+        pos = skip_ws(src, pos)
+        if paren_pos != None:
+            if pos >= n or src[pos] != ")":
+                syntax_error(
+                    ctx,
+                    "Expected matching RIGHT_PARENTHESIS for LEFT_PARENTHESIS, after version specifier",
+                    paren_pos,
+                    pos,
+                )
+            pos += 1
+        pos = skip_ws(src, pos)
+        if not at_end(src, pos):
+            marker, marker_str, pos = _parse_requirement_marker(
+                ctx,
+                pos,
+                specifier_start,
+                "comma (within version specifier), semicolon (after version specifier)" if specs else "semicolon (after name with no version specifier)",
+            )
+
+    if not at_end(src, pos):
+        syntax_error(ctx, "Expected end of dependency specifier", pos)
+
     return struct(
         name = name,
-        url = url,
         extras = extras,
-        specifier = specifier,
+        specs = specs,
+        url = url,
         marker = marker,
-        req_str = req_str,
+        marker_str = marker_str,
     )
 
 def _parse_requirement(req_str):
-    """Parses a requirement string.
+    """Parses a PEP 508 requirement (dependency specifier) string.
+
+    Accepts and rejects exactly what `packaging.requirements.Requirement`
+    (packaging 26.2) does, failing with an upstream-style message that shows
+    the input and a caret at the error position.
+
+    Differences from upstream's `Requirement` object:
+
+    - `name` is normalized (`utils.canonicalize_name`), and `extras` is a
+      sorted, de-duplicated list of normalized extra names. The names as
+      written are in `raw_name` and `raw_extras`.
+    - `specifier` is the result of `specifiers.parse_set` for name-based
+      requirements (with no specifiers it has an empty `specs` list), but
+      `None` for URL requirements.
+    - `marker` is the parsed marker tree (see `markers.parse`), or `None` when
+      the requirement has no marker. `marker_str` is the marker text exactly as
+      written (without surrounding whitespace), or `None`.
 
     Args:
         req_str: The requirement string to parse.
 
     Returns:
-        A struct representing the parsed requirement.
+        A struct with fields:
+          name: The normalized project name.
+          raw_name: The project name as written.
+          url: The URL for `name @ url` requirements, else None.
+          extras: Sorted list of unique, normalized extras.
+          raw_extras: Sorted list of unique extras as written.
+          specifier: A specifier set struct, or None for URL requirements.
+          marker: The parsed marker tree, or None.
+          marker_str: The raw marker string, or None.
+          req_str: The input string with surrounding whitespace stripped.
     """
-    req_str = req_str.strip()
-    if not req_str:
-        fail("Empty requirement string")
 
-    # 1. Extract Marker
-    marker_str = None
-    at_idx = req_str.find("@")
-    semi_idx = req_str.find(";")
+    # Fast path for a bare project name such as "requests".
+    if req_str and req_str[0] in _IDENTIFIER_START and req_str[-1] in _IDENTIFIER_START and not req_str.lstrip(_IDENTIFIER_CHARS):
+        return struct(
+            name = utils.canonicalize_name(req_str),
+            raw_name = req_str,
+            url = None,
+            extras = [],
+            raw_extras = [],
+            specifier = struct(specs = []),
+            marker = None,
+            marker_str = None,
+            req_str = req_str,
+        )
 
-    if at_idx != -1 and (semi_idx == -1 or at_idx < semi_idx):
-        # URL requirement
-        left = req_str[:at_idx].strip()
-        right = req_str[at_idx + 1:].strip()
-        if not right:
-            fail("Missing URL after @")
+    parsed = _parse(req_str)
+    return struct(
+        name = utils.canonicalize_name(parsed.name),
+        raw_name = parsed.name,
+        url = parsed.url,
+        extras = sorted({utils.canonicalize_name(e): True for e in parsed.extras}.keys()),
+        raw_extras = sorted({e: True for e in parsed.extras}.keys()),
+        specifier = None if parsed.url != None else _specifier_set(parsed.specs),
+        marker = parsed.marker,
+        marker_str = parsed.marker_str,
+        req_str = strip_whitespace(req_str),
+    )
 
-        # Find first whitespace in right part
-        ws_idx = -1
+def _specifier_set(specs):
+    """Builds a specifier set struct (see `specifiers.parse_set`).
 
-        # buildifier: disable=string-iteration
-        for i in range(len(right)):
-            if right[i] in " \t":
-                ws_idx = i
-                break
+    Args:
+        specs: The specifier structs matched by the tokenizer.
+    """
+    for spec in specs:
+        if "," in spec.version:
+            # Only an `===` version can contain a comma. Upstream joins the
+            # specifiers and splits the result on commas, which fails here.
+            return specifiers.parse_set(",".join([s.operator + s.version for s in specs]))
+    return struct(specs = specs)
 
-        if ws_idx == -1:
-            url = right
-            marker_str = None
-        else:
-            url = right[:ws_idx]
-            rest = right[ws_idx:].strip()
-            if rest.startswith(";"):
-                marker_str = rest[1:].strip()
-            elif rest:
-                fail("Expected semicolon or end after URL")
+def _spec_str(spec):
+    return spec.operator + spec.version
 
-        req_no_marker = left
-        name_extras = left
-        specifier = None
-    else:
-        # Specifier requirement
-        semi_idx = req_str.find(";")
-        if semi_idx != -1:
-            marker_str = req_str[semi_idx + 1:].strip()
-            req_no_marker = req_str[:semi_idx].strip()
-        else:
-            req_no_marker = req_str
+def _spec_key(spec):
+    if spec.operator == "===" or spec.version.endswith(".*"):
+        return (spec.operator, spec.version)
+    v = getattr(spec, "parsed_version", None) or spec.version
+    return (spec.operator, utils.canonicalize_version(v, strip_trailing_zero = spec.operator != "~="))
 
-        # Find first operator
-        op_idx = -1
+def _requirement_to_string(req):
+    """Serializes a parsed requirement like upstream `str(Requirement)`.
 
-        # buildifier: disable=string-iteration
-        for i in range(len(req_no_marker)):
-            if req_no_marker[i] in "=><!~":
-                op_idx = i
-                break
+    The project name and extras are emitted as originally written (extras
+    sorted and de-duplicated), specifiers are sorted and de-duplicated, and the
+    marker is normalized with `markers.to_string`.
 
-        if op_idx != -1:
-            name_extras = req_no_marker[:op_idx].strip()
-            specifier_str = req_no_marker[op_idx:].strip()
+    Args:
+        req: A requirement struct returned by `parse`.
 
-            # Handle enclosing parentheses: name (>=1.0)
-            if name_extras.endswith("("):
-                name_extras = name_extras[:-1].strip()
-                if specifier_str.endswith(")"):
-                    specifier_str = specifier_str[:-1].strip()
-                else:
-                    fail("Unclosed parenthesis in specifier")
+    Returns:
+        The normalized requirement string.
+    """
+    parts = [req.raw_name]
+    if req.raw_extras:
+        parts.append("[{}]".format(",".join(req.raw_extras)))
 
-            specifier = specifiers.parse_set(specifier_str)
-        else:
-            name_extras = req_no_marker
-            specifier = specifiers.parse_set("")
+    if req.specifier != None and req.specifier.specs:
+        seen = {}
+        spec_strs = []
+        for spec in sorted(req.specifier.specs, key = _spec_str):
+            key = _spec_key(spec)
+            if key not in seen:
+                seen[key] = True
+                spec_strs.append(_spec_str(spec))
+        parts.append(",".join(spec_strs))
 
-        url = None
+    if req.url:
+        parts.append(" @ " + req.url)
+        if req.marker:
+            parts.append(" ")
 
-    if not name_extras:
-        fail("Missing requirement name")
+    if req.marker:
+        parts.append("; " + markers.to_string(req.marker))
 
-    # Parse name_extras
-    if name_extras.endswith("]"):
-        bracket_idx = name_extras.find("[")
-        if bracket_idx != -1:
-            name = name_extras[:bracket_idx].strip()
-            extras_str = name_extras[bracket_idx + 1:-1].strip()
-            if extras_str:
-                raw_extras = extras_str.split(",")
-                extras = []
-                for e in raw_extras:
-                    e_stripped = e.strip()
-                    if not e_stripped:
-                        fail("Empty extra name")
-
-                    # Simple validation: no spaces
-                    if " " in e_stripped or "\t" in e_stripped:
-                        fail("Invalid extra name: '{}'".format(e_stripped))
-                    extras.append(utils.canonicalize_name(e_stripped))
-                extras = sorted(extras)
-            else:
-                extras = []
-        else:
-            fail("Invalid requirement name/extras: {}".format(name_extras))
-    else:
-        if "[" in name_extras:
-            fail("Unclosed bracket in extras")
-        name = name_extras
-        extras = []
-
-    name = utils.canonicalize_name(name)
-
-    parsed_marker = None
-    if marker_str:
-        parsed_marker = markers.parse(marker_str)
-
-    return _make_requirement(name, url, extras, specifier, parsed_marker, req_str)
+    return "".join(parts)
 
 requirements = struct(
     parse = _parse_requirement,
+    to_string = _requirement_to_string,
 )

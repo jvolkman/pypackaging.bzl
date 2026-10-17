@@ -1,3 +1,0 @@
-"""Workspace for pypackaging.bzl."""
-
-workspace(name = "pypackaging.bzl")
