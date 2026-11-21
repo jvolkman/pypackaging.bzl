@@ -56,6 +56,55 @@ fails.
 True if the markers evaluate to true, False otherwise.
 
 
+<a id="pypackaging.markers.evaluate_partial"></a>
+
+## pypackaging.markers.evaluate_partial
+
+<pre>
+load("@pypackaging.bzl", "pypackaging")
+
+pypackaging.markers.evaluate_partial(<a href="#pypackaging.markers.evaluate_partial-markers">markers</a>, <a href="#pypackaging.markers.evaluate_partial-environment">environment</a>)
+</pre>
+
+Evaluates the part of a parsed marker expression that an environment defines.
+
+This is for the cases where only a part of the environment is known, e.g.
+the `extra` is known when a wheel is extracted, but the platform is only
+known later. The comparisons of the variables that are in `environment`
+are evaluated like `evaluate` does it and the result is simplified:
+
+- `True` if the marker is true for every value of the other variables.
+- `False` if the marker is false for every value of the other variables.
+- Otherwise a marker tree with the comparisons that could not be
+  evaluated. Evaluating it with the other variables gives the same result
+  as evaluating `markers` with all of them. Use `to_string` to serialize
+  it.
+
+Only the comparisons that are decided by `environment` are removed, i.e.
+the comparisons that are left are not simplified any further, e.g. the
+result of `os_name == "posix" or os_name != "posix"` is not `True` if
+`os_name` is not in `environment`.
+
+Unlike `evaluate`, there is no default for `extra`: it is left in the
+result if it is not in `environment`. Like `evaluate`, all of the
+comparisons of the known variables are evaluated, so an invalid one fails
+even if it could not change the result.
+
+
+**PARAMETERS**
+
+
+| Name  | Description | Default Value |
+| :------------- | :------------- | :------------- |
+| <a id="pypackaging.markers.evaluate_partial-markers"></a>markers |  The parsed marker tree (list), as returned by `parse`. An empty list evaluates to True.   |  none |
+| <a id="pypackaging.markers.evaluate_partial-environment"></a>environment |  A dict mapping the names of the known marker variables (underscore form) to the values, see `evaluate`.   |  none |
+
+**RETURNS**
+
+`True`, `False` or the marker tree (see `parse`) of what is left to
+  evaluate.
+
+
 <a id="pypackaging.markers.parse"></a>
 
 ## pypackaging.markers.parse

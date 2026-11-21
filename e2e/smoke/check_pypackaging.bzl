@@ -62,6 +62,16 @@ def _check_markers():
         "extra == 'test' with extra = 'test'",
     )
 
+    left = markers.evaluate_partial(
+        markers.parse("python_version >= '3.8' and extra == 'test' and sys_platform == 'linux'"),
+        {"extra": "test"},
+    )
+    _check(
+        markers.to_string(left) == 'python_version >= "3.8" and sys_platform == "linux"',
+        "partial evaluation with extra = 'test'",
+    )
+    _check(markers.evaluate(left, _LINUX_CP311_ENV), "what is left evaluates to True")
+
     # Set-of-extras evaluation (matching pypa/packaging#1438).
     _check(
         markers.evaluate(markers.parse("extra == 'b'"), dict(_LINUX_CP311_ENV, extra = ["a", "b"])),

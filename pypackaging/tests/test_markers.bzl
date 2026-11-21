@@ -371,6 +371,90 @@ def _test_marker_to_string_impl(env, _target):
         env.expect.where(marker = src).that_str(markers.to_string(markers.parse(src))).equals(expected)
     env.expect.that_str(markers.to_string([])).equals("")
 
+def _partial(marker, environment):
+    result = markers.evaluate_partial(markers.parse(marker), environment)
+    if type(result) == "bool":
+        return result
+    return markers.to_string(result)
+
+def _test_marker_evaluate_partial_impl(env, _target):
+    # The same cases as in rules_python, where `True` is an empty string.
+    for marker, want in [
+        ("os_name == 'osx' and extra == 'bar'", False),
+        ("os_name == 'osx' and extra == 'foo'", 'os_name == "osx"'),
+        ("platform_system == 'aarch64' and os_name == 'osx' and extra == 'foo'", 'platform_system == "aarch64" and os_name == "osx"'),
+        ("platform_system == 'aarch64' and extra == 'foo' and os_name == 'osx'", 'platform_system == "aarch64" and os_name == "osx"'),
+        ("os_name == 'osx' or extra == 'bar'", 'os_name == "osx"'),
+        ("os_name == 'osx' or extra == 'foo'", True),
+        ("extra == 'bar' or os_name == 'osx'", 'os_name == "osx"'),
+        ("extra == 'foo' or os_name == 'osx'", True),
+        ("os_name == 'win' or extra == 'bar' or os_name == 'osx'", 'os_name == "win" or os_name == "osx"'),
+        ("os_name == 'win' or extra == 'foo' or os_name == 'osx'", True),
+        # Everything is known.
+        ("", True),
+        ("extra == 'foo'", True),
+        ("extra == 'bar'", False),
+        ("extra == 'bar' or (extra == 'foo' and extra != 'foo')", False),
+        # The parentheses are only kept if they are needed.
+        ("(os_name == 'a')", 'os_name == "a"'),
+        ("(os_name == 'a' or os_name == 'b') and extra == 'foo'", 'os_name == "a" or os_name == "b"'),
+        ("(os_name == 'a' or os_name == 'b') and sys_platform == 'x' and extra == 'foo'", '(os_name == "a" or os_name == "b") and sys_platform == "x"'),
+        ("(os_name == 'a' and extra == 'foo') or sys_platform == 'x'", 'os_name == "a" or sys_platform == "x"'),
+        ("(os_name == 'a' and sys_platform == 'y' and extra == 'foo') or sys_platform == 'x'", 'os_name == "a" and sys_platform == "y" or sys_platform == "x"'),
+        ("(os_name == 'a' or extra == 'bar') and sys_platform == 'x'", 'os_name == "a" and sys_platform == "x"'),
+        ("(os_name == 'a' or extra == 'foo') and sys_platform == 'x'", 'sys_platform == "x"'),
+        ("(os_name == 'a' and extra == 'bar') or sys_platform == 'x'", 'sys_platform == "x"'),
+        ("((os_name == 'a' or os_name == 'b') and extra == 'foo') or sys_platform == 'x'", 'os_name == "a" or os_name == "b" or sys_platform == "x"'),
+        ("os_name == 'a' and (sys_platform == 'x' or (extra == 'foo' and python_version >= '3.8'))", 'os_name == "a" and (sys_platform == "x" or python_version >= "3.8")'),
+        ("os_name == 'a' and ((sys_platform == 'x' or sys_platform == 'y') and extra == 'foo')", 'os_name == "a" and (sys_platform == "x" or sys_platform == "y")'),
+        ("os_name == 'a' and (sys_platform == 'x' and extra == 'foo' and python_version >= '3.8')", 'os_name == "a" and sys_platform == "x" and python_version >= "3.8"'),
+        ("os_name == 'a' or (sys_platform == 'x' and (extra == 'foo' and python_version >= '3.8'))", 'os_name == "a" or sys_platform == "x" and python_version >= "3.8"'),
+        ("os_name == 'a' and (extra == 'bar' or (extra == 'foo' and extra != 'foo'))", False),
+        ("os_name == 'a' or (extra == 'bar' or (extra == 'foo' and extra == 'foo'))", True),
+    ]:
+        env.expect.where(marker = marker).that_str(str(_partial(marker, {"extra": "foo"}))).equals(str(want))
+
+    # The values are handled like in `evaluate`.
+    env.expect.that_str(str(_partial("extra == 'Foo.Bar' and os_name == 'a'", {"extra": "foo_bar"}))).equals('os_name == "a"')
+    env.expect.that_str(str(_partial("extra == 'bar' and os_name == 'a'", {"extra": ["foo", "bar"]}))).equals('os_name == "a"')
+    env.expect.that_str(str(_partial("extra == 'baz' and os_name == 'a'", {"extra": ["foo", "bar"]}))).equals("False")
+    env.expect.that_str(str(_partial("extra == '' or os_name == 'a'", {"extra": None}))).equals("True")
+    env.expect.that_str(str(_partial("'foo' in extras and os_name == 'a'", {"extras": ["Foo"]}))).equals('os_name == "a"')
+
+    # Nothing is known, `extra` does not have a default.
+    for marker, want in [
+        ("extra == 'Foo'", 'extra == "foo"'),
+        ("os_name=='a' and(extra=='foo' or sys.platform=='x')", 'os_name == "a" and (extra == "foo" or sys_platform == "x")'),
+    ]:
+        env.expect.where(marker = marker).that_str(str(_partial(marker, {}))).equals(want)
+
+    # The platform is known and the extra is not.
+    for marker, want in [
+        ("sys_platform == 'linux' and extra == 'x'", 'extra == "x"'),
+        ("sys_platform == 'win32' and extra == 'x'", False),
+        ("python_version >= '3.8' or extra == 'x'", True),
+        ("python_full_version < '3.8' or extra == 'x'", 'extra == "x"'),
+        ("sys_platform == 'linux' and python_version >= '3.8'", True),
+    ]:
+        env.expect.where(marker = marker).that_str(str(_partial(marker, _ENV))).equals(str(want))
+
+    # What is left is a marker that can be evaluated or evaluated partially.
+    left = markers.evaluate_partial(
+        markers.parse("extra == 'foo' and (os_name == 'a' or sys_platform == 'x') and python_version >= '3.8'"),
+        {"extra": "foo"},
+    )
+    env.expect.that_str(markers.to_string(left)).equals('(os_name == "a" or sys_platform == "x") and python_version >= "3.8"')
+    env.expect.that_bool(markers.evaluate(left, {"os_name": "b", "python_version": "3.9", "sys_platform": "x"})).equals(True)
+    env.expect.that_bool(markers.evaluate(left, {"os_name": "b", "python_version": "3.9", "sys_platform": "y"})).equals(False)
+    left = markers.evaluate_partial(left, {"python_version": "3.9"})
+    env.expect.that_str(markers.to_string(left)).equals('os_name == "a" or sys_platform == "x"')
+    env.expect.that_bool(markers.evaluate_partial(left, {"sys_platform": "x"})).equals(True)
+
+    # The input is not changed.
+    parsed = markers.parse("(os_name == 'a' or extra == 'foo') and sys_platform == 'x'")
+    markers.evaluate_partial(parsed, {"extra": "bar"})
+    env.expect.that_str(markers.to_string(parsed)).equals('(os_name == "a" or extra == "foo") and sys_platform == "x"')
+
 # Failure cases: (marker, environment overrides or None to only parse, expected
 # message fragments).
 _FAILURES = [
@@ -443,7 +527,10 @@ def _failure_subject_impl(ctx):
                 env[k] = tuple(v["tuple"])
             else:
                 env[k] = v
-        markers.evaluate(m, env)
+        if ctx.attr.partial:
+            markers.evaluate_partial(m, env)
+        else:
+            markers.evaluate(m, env)
     return []
 
 _failure_subject = rule(
@@ -451,6 +538,7 @@ _failure_subject = rule(
     attrs = {
         "env_overrides": attr.string(),
         "marker": attr.string(mandatory = True),
+        "partial": attr.bool(),
         "to_string": attr.bool(),
     },
 )
@@ -477,6 +565,18 @@ def _failure_tests(name):
         )
         expect_failure_test(test_name, test_name + "_subject", fragments)
         names.append(test_name)
+
+    # The known variables are evaluated like in `evaluate`.
+    test_name = name + "_partial"
+    util.helper_target(
+        _failure_subject,
+        name = test_name + "_subject",
+        marker = "os_name ~= 'a' or extra == 'foo'",
+        env_overrides = "{}",
+        partial = True,
+    )
+    expect_failure_test(test_name, test_name + "_subject", ["Undefined comparison"])
+    names.append(test_name)
     return names
 
 def markers_test_suite(name):
@@ -498,6 +598,7 @@ def markers_test_suite(name):
             "test_marker_string_literals": _test_marker_string_literals_impl,
             "test_marker_grammar": _test_marker_grammar_impl,
             "test_marker_to_string": _test_marker_to_string_impl,
+            "test_marker_evaluate_partial": _test_marker_evaluate_partial_impl,
         },
         extra_tests = failure_tests,
     )

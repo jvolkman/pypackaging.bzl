@@ -94,6 +94,7 @@ The time is of Bazel 8.5.0 on a laptop, only the ratios are meaningful.
 | ---------------------------- | ----: | --------: |
 | `evaluate_long`              |  2018 |     288.5 |
 | `evaluate_long_parsed`       |   659 |      87.8 |
+| `evaluate_partial`           |   306 |      49.5 |
 | `evaluate_string`            |   121 |      19.0 |
 | `evaluate_two_strings`       |   250 |      37.3 |
 | `evaluate_version`           |   211 |      38.3 |

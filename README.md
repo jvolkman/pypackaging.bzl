@@ -91,6 +91,11 @@ pypackaging.specifiers.set_filter(spec, ["0.9", "1.1", "1.2rc1"])  # ["1.1"]
 marker = pypackaging.markers.parse("python_version >= '3.8' and sys_platform == 'linux'")
 pypackaging.markers.evaluate(marker, {"python_version": "3.12", "sys_platform": "linux"})  # True
 
+# Or evaluate only what is known: the result is True, False or the marker
+# that is left to evaluate.
+left = pypackaging.markers.evaluate_partial(marker, {"python_version": "3.12"})
+pypackaging.markers.to_string(left)  # 'sys_platform == "linux"'
+
 # Requirements: req.name, req.extras, req.specifier, req.url, req.marker,
 # req.marker_str.
 req = pypackaging.requirements.parse("requests[socks]>=2.31; python_version >= '3.8'")
@@ -162,6 +167,9 @@ differs in the following ways:
     for `==` and `!=` (matching `pypa/packaging#1438`; an empty collection
     evaluates like `""`).
   - `\N{...}` named Unicode escapes in marker string literals are not supported.
+  - `markers.evaluate_partial` is not in `packaging`: it evaluates the
+    comparisons of the variables that are in `environment` and returns `True`,
+    `False` or the marker that is left to evaluate.
 - **Requirements**: `requirements.parse` normalizes `name` and returns sorted,
   deduplicated, normalized `extras` (with original spellings in `raw_name` and
   `raw_extras`). `specifier` is `None` for URL requirements.

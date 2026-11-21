@@ -681,6 +681,8 @@ def _eval_item(item, environment, cache, ver_cache):
         if op != "in" and op != "not in":
             # The same comparison is often repeated in a marker and the same
             # version is compared in all of them, so both are parsed once.
+            # Safe to share `cache` with `"extra"`: `op` always starts with an
+            # operator symbol (`=`, `!`, `<`, `>`, `~`), never `"e"`.
             spec_str = op + rhs_val
             if spec_str in cache:
                 spec = cache[spec_str]
@@ -833,8 +835,140 @@ def evaluate_markers(markers, environment):
 
     fail("internal error: marker evaluation did not terminate")
 
+def _join_groups(groups):
+    """Builds a marker tree from the `or`-ed groups of the `and`-ed atoms."""
+    out = []
+    for group in groups:
+        if out:
+            out.append("or")
+        for i, atom in enumerate(group):
+            if i:
+                out.append("and")
+            out.append(atom)
+    return out
+
+def _close_group(frame):
+    """Adds the `and`-ed atoms that were seen since the last `or` to the frame."""
+    group = frame[5]
+    if frame[6]:
+        # An atom is false, so the whole group is.
+        pass
+    elif not group:
+        # All of the atoms are true, so the whole expression is.
+        frame[3] = True
+    elif len(group) == 1 and type(group[0]) == "tuple" and len(group[0]) == 1:
+        # Only a parenthesized expression is left, so it does not need the
+        # parentheses.
+        frame[4].extend(group[0][0])
+    else:
+        frame[4].append([
+            _join_groups(atom[0]) if type(atom) == "tuple" and len(atom) == 1 else atom
+            for atom in group
+        ])
+    frame[5] = []
+    frame[6] = False
+
+def evaluate_markers_partial(markers, environment):
+    """Evaluates the part of a parsed marker expression that an environment defines.
+
+    This is for the cases where only a part of the environment is known, e.g.
+    the `extra` is known when a wheel is extracted, but the platform is only
+    known later. The comparisons of the variables that are in `environment`
+    are evaluated like `evaluate` does it and the result is simplified:
+
+    - `True` if the marker is true for every value of the other variables.
+    - `False` if the marker is false for every value of the other variables.
+    - Otherwise a marker tree with the comparisons that could not be
+      evaluated. Evaluating it with the other variables gives the same result
+      as evaluating `markers` with all of them. Use `to_string` to serialize
+      it.
+
+    Only the comparisons that are decided by `environment` are removed, i.e.
+    the comparisons that are left are not simplified any further, e.g. the
+    result of `os_name == "posix" or os_name != "posix"` is not `True` if
+    `os_name` is not in `environment`.
+
+    Unlike `evaluate`, there is no default for `extra`: it is left in the
+    result if it is not in `environment`. Like `evaluate`, all of the
+    comparisons of the known variables are evaluated, so an invalid one fails
+    even if it could not change the result.
+
+    Args:
+        markers: The parsed marker tree (list), as returned by `parse`. An
+            empty list evaluates to True.
+        environment: A dict mapping the names of the known marker variables
+            (underscore form) to the values, see `evaluate`.
+
+    Returns:
+        `True`, `False` or the marker tree (see `parse`) of what is left to
+        evaluate.
+    """
+    if not markers:
+        return True
+
+    cache = {}
+    ver_cache = {}
+
+    # Mutable stack frames: [markers, index, length, is true, the groups that
+    # are left, the atoms of the current group that are left, is the current
+    # group false]. An atom that is left is either an item (a tuple of 3) or
+    # the groups of a parenthesized expression (wrapped in a tuple of 1).
+    stack = [[markers, 0, len(markers), False, [], [], False]]
+    result = None
+
+    # Each step advances an index or pops a level, so this always terminates.
+    for _ in range(1 << 30):
+        frame = stack[-1]
+        i = frame[1]
+
+        if i >= frame[2]:
+            _close_group(frame)
+            if frame[3]:
+                result = True
+            elif frame[4]:
+                result = frame[4]
+            else:
+                result = False
+            stack.pop()
+            if not stack:
+                break
+            frame = stack[-1]
+            if result == False:
+                frame[6] = True
+            elif result == True:
+                pass
+            elif len(result) == 1:
+                # There is no `or`, so the parentheses are not needed.
+                frame[5].extend(result[0])
+            else:
+                frame[5].append((result,))
+            continue
+
+        marker = frame[0][i]
+        frame[1] = i + 1
+
+        if type(marker) == "tuple":
+            lhs, _, rhs = marker
+            if (lhs.value if lhs.type == "variable" else rhs.value) not in environment:
+                frame[5].append(marker)
+            elif not _eval_item(marker, environment, cache, ver_cache):
+                frame[6] = True
+        elif type(marker) == "list":
+            stack.append([marker, 0, len(marker), False, [], [], False])
+        elif marker == "or":
+            _close_group(frame)
+        elif marker == "and":
+            pass
+        else:
+            fail("Unexpected marker: {}".format(marker))
+
+    if type(result) == "list":
+        return _join_groups(result)
+    return result
+
 markers = struct(
     parse = parse_marker,
     evaluate = evaluate_markers,
+    evaluate_partial = evaluate_markers_partial,
     to_string = marker_to_string,
 )

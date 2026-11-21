@@ -226,6 +226,36 @@ def _conformance_marker_logic(env):
 
 _tests.append(_conformance_marker_logic)
 
+def _conformance_marker_evaluate_partial(env):
+    # `packaging` does not have it, but what it has to be is defined by the
+    # full evaluation: the result for a part of the environment is either the
+    # same or it is a marker that evaluates to the same.
+    failures = []
+    cases = [(marker, json.decode(overrides), want) for marker, overrides, want in EVALUATE_CASES]
+    cases.extend([(marker, {}, want) for marker, want in LOGIC_CASES])
+    for marker, overrides, want in cases:
+        full = dict(MARKER_ENV) | overrides
+        parsed = markers.parse(marker)
+        for name in full:
+            for known in [
+                {name: full[name]},
+                {k: v for k, v in full.items() if k != name},
+            ]:
+                got = markers.evaluate_partial(parsed, known)
+                if type(got) != "bool":
+                    left = markers.to_string(got)
+                    if markers.to_string(markers.parse(left)) != left:
+                        failures.append("{} with {}: got {}, which is not normalized".format(marker, known, left))
+                    got = markers.evaluate(got, full)
+                if got != want:
+                    failures.append("{} with {}: got {}, want {}".format(marker, known, got, want))
+        if markers.evaluate_partial(parsed, full) != want:
+            failures.append("{} with everything: want {}".format(marker, want))
+
+    _expect_no_failures(env, failures)
+
+_tests.append(_conformance_marker_evaluate_partial)
+
 # Tags
 
 def _conformance_get_supported(env):

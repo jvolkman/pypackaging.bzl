@@ -12,6 +12,9 @@ While the version is 0.x, breaking changes are released as minor versions.
 
 - WORKSPACE is supported again with Bazel 7 and 8: define the repository with
   the name `pypackaging.bzl`, see the README. `e2e/workspace` tests it.
+- `markers.evaluate_partial` evaluates a marker with a part of the
+  environment, e.g. only with `extra` or only with the platform, and returns
+  `True`, `False` or the marker that is left to evaluate.
 
 ### Changed
 

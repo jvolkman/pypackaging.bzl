@@ -11,6 +11,7 @@ _STEPS = {
     # keep sorted
     "evaluate_long": 2018,
     "evaluate_long_parsed": 659,
+    "evaluate_partial": 306,
     "evaluate_string": 121,
     "evaluate_two_strings": 250,
     "evaluate_version": 211,

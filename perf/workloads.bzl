@@ -2,7 +2,7 @@
 
 The names and the inputs of the marker and version workloads are the same as
 in `tests/perf/workloads.bzl` of rules_python, so that the results can be
-compared.
+compared. `evaluate_partial` is `evaluate_non_strict` there.
 """
 
 load("@pypackaging.bzl", "pypackaging")
@@ -56,6 +56,10 @@ WORKLOADS = {
     # keep sorted
     "evaluate_long": lambda: _markers.evaluate(_markers.parse(_LONG_MARKER), _ENV),
     "evaluate_long_parsed": lambda: _markers.evaluate(_PARSED_LONG_MARKER, _ENV),
+    "evaluate_partial": lambda: _markers.evaluate_partial(
+        _markers.parse("python_version < '3.11' and extra == 'dev'"),
+        {"extra": "dev"},
+    ),
     "evaluate_string": lambda: _markers.evaluate(_markers.parse(_STRING_MARKER), _ENV),
     "evaluate_two_strings": lambda: _markers.evaluate(_markers.parse(_TWO_STRINGS_MARKER), _ENV),
     "evaluate_version": lambda: _markers.evaluate(_markers.parse(_VERSION_MARKER), _ENV),
