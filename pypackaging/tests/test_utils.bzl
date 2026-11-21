@@ -67,7 +67,6 @@ def _test_is_normalized_name_impl(env, _target):
     for name in ["foo", "foo-bar", "a", "1", "a1-b2", "requests"]:
         env.expect.where(name = name).that_bool(utils.is_normalized_name(name)).equals(True)
 
-    # "foo--bar" is accepted by packaging 26.2's regex (a documented divergence).
     for name in ["", "Django", "foo--bar", "-foo", "foo-", "foo_bar", "foo.bar", "ab-", "foo bar", "café"]:
         env.expect.where(name = name).that_bool(utils.is_normalized_name(name)).equals(False)
 
@@ -173,12 +172,11 @@ def _test_parse_sdist_filename_impl(env, _target):
     env.expect.that_str(res.name).equals("foo")
     env.expect.that_str(res.version.version_str).equals("1.0")
 
-    # (filename, name, normalized version), from packaging 26.2.
+    # (filename, name, normalized version), from packaging 26.3.
     cases = [
         ("Foo_Bar-1.0.zip", "foo-bar", "1.0"),
         ("foo-bar-1.0.tar.gz", "foo-bar", "1.0"),
         ("foo-1.0-1.tar.gz", "foo-1-0", "1"),
-        ("-1.0.tar.gz", "", "1.0"),
         ("foo-1.0+local.tar.gz", "foo", "1.0+local"),
         ("foo-v1.0.zip", "foo", "1.0"),
         ("café-1.0.tar.gz", "café", "1.0"),
@@ -189,10 +187,6 @@ def _test_parse_sdist_filename_impl(env, _target):
         env.expect.where(filename = filename).that_str(utils.canonicalize_version(res.version, strip_trailing_zero = False)).equals(version)
 
 def _test_parse_wheel_filename_tags_impl(env, _target):
-    # Empty tag components are accepted like packaging.
-    res = utils.parse_wheel_filename("foo-1.0-py3--any.whl")
-    env.expect.that_collection(["{}-{}-{}".format(t.interpreter, t.abi, t.platform) for t in res.tags]).contains_exactly(["py3--any"])
-
     # Repeated compressed components don't produce duplicate tags.
     res = utils.parse_wheel_filename("foo-1.0-py3-none-any.any.whl")
     env.expect.that_int(len(res.tags)).equals(1)
@@ -200,8 +194,11 @@ def _test_parse_wheel_filename_tags_impl(env, _target):
 _INVALID_WHEEL_FILENAMES = [
     ("foo-1.0-py3-none-any.zip", "extension must be '.whl'"),
     ("foo-1.0-py3-none-any.WHL", "extension must be '.whl'"),
+    ("foo-1.0-py3-none-any.whl\n", "extension must be '.whl'"),
     ("foo-py3-none-any.whl", "wrong number of parts"),
     ("foo-1.0-1-2-py3-none-any.whl", "wrong number of parts"),
+    ("-1.0-py3-none-any.whl", "Invalid project name"),
+    ("-1.0-1-py3-none-any.whl", "Invalid project name"),
     ("foo__bar-1.0-py3-none-any.whl", "Invalid project name"),
     ("foo bar-1.0-py3-none-any.whl", "Invalid project name"),
     ("foo+bar-1.0-py3-none-any.whl", "Invalid project name"),
@@ -210,12 +207,16 @@ _INVALID_WHEEL_FILENAMES = [
     ("foo-1.0-abc-py3-none-any.whl", "Invalid build number"),
     ("foo-notaversion-py3-none-any.whl", "Invalid wheel filename (invalid version)"),
     ("foo-1.0.-py3-none-any.whl", "Invalid wheel filename (invalid version)"),
+    ("foo-1.0-py3--any.whl", "empty component"),
+    ("foo-1.0-2.7.6-none-any.whl", "invalid interpreter"),
 ]
 
 _INVALID_SDIST_FILENAMES = [
     ("foo-1.0.tgz", "extension must be '.tar.gz' or '.zip'"),
     ("foo-1.0.TAR.GZ", "extension must be '.tar.gz' or '.zip'"),
     ("foo.tar.gz", "Invalid sdist filename"),
+    ("-1.0.tar.gz", "empty project name"),
+    ("-1.0.zip", "empty project name"),
     ("foo-bar.tar.gz", "Invalid sdist filename (invalid version)"),
     ("foo-.tar.gz", "Invalid sdist filename (invalid version)"),
 ]

@@ -8,7 +8,7 @@ below. Their copyright notices and license texts are reproduced here and in
 ## pypa/packaging
 
 - Project: <https://github.com/pypa/packaging>
-- Version: 26.2
+- Version: 26.3
 - Used in: `pypackaging/private/` (versions, specifiers, markers,
   requirements, tags, utils)
 - Copyright: Copyright (c) Donald Stufft and individual contributors.

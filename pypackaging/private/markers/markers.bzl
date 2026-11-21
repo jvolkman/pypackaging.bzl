@@ -2,7 +2,7 @@
 
 Derived from pypa/packaging: packaging/markers.py, packaging/_parser.py and
 packaging/_tokenizer.py (Apache 2.0 / BSD).
-Baseline: pypa/packaging 26.2
+Baseline: pypa/packaging 26.3 (plus #1438 set-of-extras evaluation)
 """
 
 load("//pypackaging/private/specifiers:specifiers.bzl", "specifier_contains", "try_parse_specifier")
@@ -143,10 +143,7 @@ def skip_ws(src, pos, n = None):
     return pos
 
 def at_end(src, pos, n = None):
-    """Returns True if the upstream END token (regex `$`) matches at `pos`.
-
-    Like Python's `$` without MULTILINE, this matches at the end of the string
-    and also just before a single trailing newline.
+    """Returns True if the upstream END token (regex `\\Z`) matches at `pos`.
 
     Internal helper shared with requirements.bzl; not part of the public API.
 
@@ -160,7 +157,7 @@ def at_end(src, pos, n = None):
     """
     if n == None:
         n = len(src)
-    return pos == n or (pos == n - 1 and src[pos] == "\n")
+    return pos == n
 
 def syntax_error(ctx, message, span_start, span_end = None):
     """Fails with an upstream-style `ParserSyntaxError` message.
@@ -368,13 +365,13 @@ def _parse_marker_item(ctx, src, n, pos):
     rhs, pos = _parse_marker_var(ctx, src, n, pos)
     pos = skip_ws(src, pos, n)
 
-    # PEP 685: normalize the value compared against `extra` (upstream
-    # `_normalize_extras`). Upstream only does this for top-level items, so
-    # `(extra == 'Foo_Bar')` never matches there; we normalize at every
-    # nesting level.
+    # PEP 685 / PEP 735: normalize values compared against `extra`, `extras`,
+    # and `dependency_groups` at every nesting level (matching packaging 26.3).
     if lhs.type == "variable" and lhs.value == "extra":
         rhs = _string(utils.canonicalize_name(rhs.value))
     elif rhs.type == "variable" and rhs.value == "extra":
+        lhs = _string(utils.canonicalize_name(lhs.value))
+    elif rhs.type == "variable" and rhs.value in _MARKERS_ALLOWING_SET and lhs.type == "string":
         lhs = _string(utils.canonicalize_name(lhs.value))
     return (lhs, op, rhs), pos
 
@@ -448,11 +445,12 @@ def parse_marker(marker_str):
     """Parses a PEP 508 marker string into an AST-like structure.
 
     The grammar, error conditions and value processing follow
-    `packaging.markers.Marker` (packaging 26.2): quoted strings are decoded like
+    `packaging.markers.Marker` (packaging 26.3): quoted strings are decoded like
     Python string literals (`\\N{...}` escapes are not supported), dotted
     variable names are mapped to their underscore form, `python_implementation`
-    is an alias for `platform_python_implementation`, and the value compared
-    against `extra` is normalized (PEP 685) at every nesting level.
+    is an alias for `platform_python_implementation`, and values compared
+    against `extra`, `extras` and `dependency_groups` are normalized (PEP 685
+    / PEP 735) at every nesting level.
 
     Unlike upstream, an empty or whitespace-only string is accepted and
     returns `[]`, which `evaluate` treats as always true.
@@ -484,7 +482,11 @@ def parse_marker(marker_str):
 
 def _format_node(node):
     if node.type == "string":
-        return "\"" + node.value + "\""
+        if "\"" not in node.value:
+            return "\"" + node.value + "\""
+        if "'" not in node.value:
+            return "'" + node.value + "'"
+        fail("Cannot serialize marker value containing both quote characters: {}".format(repr(node.value)))
     return node.value
 
 def _format_item(item):
@@ -502,9 +504,10 @@ def _unwrap_singleton(node):
 def marker_to_string(markers):
     """Serializes a parsed marker tree like upstream `str(Marker)`.
 
-    Variables and `extra` values are emitted in their normalized form, string
-    values are double-quoted, and redundant outer parentheses around a group
-    are dropped.
+    Variables and `extra`/`extras`/`dependency_groups` values are emitted in
+    their normalized form, string values are double-quoted (or single-quoted
+    when the value contains `"`), and redundant outer parentheses around a
+    group are dropped. Fails if a string value contains both `"` and `'`.
 
     Args:
         markers: A parsed marker tree (from `parse`).
@@ -578,15 +581,20 @@ def _resolve_extra(environment, cache):
         val = ""
     elif type(extra) == "string":
         val = utils.canonicalize_name(extra)
-    elif type(extra) in ("list", "tuple"):
-        out = {}
-        for e in extra:
-            if type(e) != "string":
-                fail("Marker environment value for 'extra' must be a string or a list/tuple of strings, got an element of type {}".format(type(e)))
-            out[utils.canonicalize_name(e)] = True
-        val = out
+    elif type(extra) in ("list", "tuple", "set"):
+        # Like upstream packaging (#1438), an empty collection of extras
+        # evaluates like the empty string (no extra selected).
+        if not extra:
+            val = ""
+        else:
+            out = {}
+            for e in extra:
+                if type(e) != "string":
+                    fail("Marker environment value for 'extra' must be a string or a list/tuple/set of strings, got an element of type {}".format(type(e)))
+                out[utils.canonicalize_name(e)] = True
+            val = out
     else:
-        fail("Marker environment value for 'extra' must be a string or a list/tuple of strings, got {}".format(type(extra)))
+        fail("Marker environment value for 'extra' must be a string or a list/tuple/set of strings, got {}".format(type(extra)))
     cache["extra"] = val
     return val
 
@@ -626,15 +634,15 @@ def _eval_item(item, environment, cache, ver_cache):
         rhs_val = _env_lookup(environment, key, item, cache)
         env_val = rhs_val
 
-    # Non-standard, uv-compatible extension: `extra` may be a list/tuple of
-    # active extras (converted to a dict set by `_resolve_extra`).
+    # Upstream packaging (#1438): `extra` may be a set/list/tuple of active
+    # extras (converted to a dict set by `_resolve_extra`).
     if key == "extra" and type(env_val) == "dict":
         value = rhs_val if lhs.type == "variable" else lhs_val
         if op == "==":
             return value in env_val
         if op == "!=":
             return value not in env_val
-        fail("Operator '{}' is not supported when 'extra' is a list of extras (in marker `{}`); only == and != are".format(
+        fail("Operator '{}' is not supported when 'extra' is a collection of extras (in marker `{}`); only == and != are".format(
             op,
             _format_item(item),
         ))
@@ -697,7 +705,8 @@ def _eval_item(item, environment, cache, ver_cache):
 def evaluate_markers(markers, environment):
     """Evaluates a parsed marker expression against an environment.
 
-    Semantics follow `packaging.markers.Marker.evaluate` (packaging 26.2):
+    Semantics follow `packaging.markers.Marker.evaluate` (packaging 26.3, plus
+    set-of-extras evaluation from pypa/packaging#1438):
 
     - `python_version`, `python_full_version`, `implementation_version` and
       `platform_release` are compared as PEP 440 versions when `op + value` is a
@@ -713,16 +722,16 @@ def evaluate_markers(markers, environment):
       / PEP 735) on both sides.
 
     There is no default environment: every variable the marker references must
-    be present, except `extra`, which defaults to "" (None is also treated as
-    ""). Callers must supply `extras` / `dependency_groups` (as lists of
-    strings) when markers use them.
+    be present, except `extra`, which defaults to "" (None and empty
+    collections are also treated as ""). Callers must supply `extras` /
+    `dependency_groups` (as lists/sets of strings) when markers use them.
 
-    Non-standard extension (uv-compatible): `environment["extra"]` may be a
-    list or tuple of strings, the set of active extras (uv also uses this for
-    its conflict tokens). Each element is normalized. `extra == X` and
-    `X == extra` are True iff X is in the set; `!=` is True iff it is not. An
-    empty list therefore makes `==` False and `!=` True. Any other operator
-    (including `===`, which fails for a string `extra` too) fails.
+    `environment["extra"]` may also be a list, tuple, or set of strings
+    representing all active extras (matching pypa/packaging#1438). Each element
+    is normalized. `extra == X` and `X == extra` are True iff X is in the set;
+    `!=` is True iff it is not. An empty collection behaves like `""` (no extra
+    selected). Any operator other than `==` and `!=` on a non-empty collection
+    fails.
 
     Args:
         markers: The parsed marker tree (list), as returned by `parse`. An

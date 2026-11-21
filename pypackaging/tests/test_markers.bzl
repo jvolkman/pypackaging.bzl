@@ -276,10 +276,13 @@ def _test_list_valued_extra_impl(env, _target):
     env.expect.that_bool(_eval("extra == 'baz'", extra = ("baz",))).equals(True)
     env.expect.that_bool(_eval("extra != 'baz'", extra = ("baz",))).equals(False)
 
-    # An empty list: `==` is False, `!=` is True.
+    # An empty list/tuple behaves like "" (no extra selected, matching packaging#1438).
     env.expect.that_bool(_eval("extra == 'baz'", extra = [])).equals(False)
-    env.expect.that_bool(_eval("extra == ''", extra = [])).equals(False)
+    env.expect.that_bool(_eval("extra == ''", extra = [])).equals(True)
+    env.expect.that_bool(_eval("extra == ''", extra = ())).equals(True)
     env.expect.that_bool(_eval("extra != 'baz'", extra = [])).equals(True)
+    env.expect.that_bool(_eval("extra != ''", extra = [])).equals(False)
+    env.expect.that_bool(_eval("extra >= 'z'", extra = [])).equals(False)
 
     # Scalar `extra` keeps upstream semantics (missing / None / "" all mean "").
     env.expect.that_bool(_eval("extra == ''")).equals(True)
@@ -328,9 +331,8 @@ def _test_marker_grammar_impl(env, _target):
         env.expect.where(marker = s).that_bool(markers.evaluate(markers.parse(s), {})).equals(True)
     env.expect.that_bool(markers.evaluate([], {})).equals(True)
 
-    # Surrounding whitespace and a single trailing newline (regex `$`).
+    # Surrounding whitespace (spaces/tabs).
     env.expect.that_bool(_eval(" \tos_name == 'posix' \t")).equals(True)
-    env.expect.that_bool(_eval("os_name == 'posix'\n")).equals(True)
 
     # No whitespace is needed around quoted strings or parentheses.
     env.expect.that_bool(_eval("os_name=='nt'or(os_name=='posix')")).equals(True)
@@ -359,9 +361,10 @@ def _test_marker_to_string_impl(env, _target):
         ("extra == os_name", "extra == \"os-name\""),
         ("os_name not  in 'x'", "os_name not in \"x\""),
         ("'a' in extras", "\"a\" in extras"),
-        # Like upstream, quotes inside values aren't escaped.
-        ("os_name == 'a\"b'", "os_name == \"a\"b\""),
-        # Divergence: upstream would print `a and b or c` here.
+        ("'S_P__A_M' in extras", "\"s-p-a-m\" in extras"),
+        ("'Foo_Bar' not in dependency_groups", "\"foo-bar\" not in dependency_groups"),
+        # Uses single quotes when the value contains double quotes (packaging 26.3).
+        ("os_name == 'a\"b'", "os_name == 'a\"b'"),
         ("os_name == 'a' and ((os_name == 'b' or os_name == 'c'))", "os_name == \"a\" and (os_name == \"b\" or os_name == \"c\")"),
     ]
     for src, expected in cases:
@@ -379,6 +382,7 @@ _FAILURES = [
     ("(os_name == 'nt' or)", None, ["Expected a marker variable or quoted string"]),
     ("and os_name == 'nt'", None, ["Expected a marker variable or quoted string"]),
     ("()", None, ["Expected a marker variable or quoted string"]),
+    ("os_name == 'posix'\n", None, ["Expected end of marker expression"]),
     ("os_name == 'posix'\n\n", None, ["Expected end of marker expression"]),
     ("\nos_name == 'posix'", None, ["Expected a marker variable or quoted string"]),
     ("os_name == 'posix';", None, ["Expected end of marker expression"]),
@@ -409,24 +413,28 @@ _FAILURES = [
     ("'a' in extras", {"extras": None}, ["Undefined environment variable 'extras'"]),
     # Collections on the left-hand side.
     ("extras == 'a'", {"extras": ["a"]}, ["the left-hand side must be a string"]),
-    # List-valued extra with unsupported operators.
-    ("extra in 'baz,foo'", {"extra": ["foo"]}, ["Operator 'in' is not supported when 'extra' is a list of extras", "extra in \"baz,foo\""]),
+    # Collection-valued extra with unsupported operators.
+    ("extra in 'baz,foo'", {"extra": ["foo"]}, ["Operator 'in' is not supported when 'extra' is a collection of extras", "extra in \"baz,foo\""]),
     ("extra not in 'baz,foo'", {"extra": ["foo"]}, ["Operator 'not in' is not supported"]),
     ("'foo' in extra", {"extra": ["foo"]}, ["Operator 'in' is not supported"]),
     ("extra < 'z'", {"extra": ["foo"]}, ["Operator '<' is not supported"]),
     ("extra ~= 'z'", {"extra": ("foo",)}, ["Operator '~=' is not supported"]),
-    ("extra >= 'z'", {"extra": []}, ["Operator '>=' is not supported"]),
+    ("extra >= 'z'", {"extra": ["foo"]}, ["Operator '>=' is not supported"]),
     ("extra === 'foo'", {"extra": ["foo"]}, ["Operator '===' is not supported", "only == and != are"]),
     # Bad environment value types.
-    ("extra == 'a'", {"extra": 1}, ["must be a string or a list/tuple of strings"]),
-    ("extra == 'a'", {"extra": ["a", 1]}, ["must be a string or a list/tuple of strings"]),
+    ("extra == 'a'", {"extra": 1}, ["must be a string or a list/tuple/set of strings"]),
+    ("extra == 'a'", {"extra": ["a", 1]}, ["must be a string or a list/tuple/set of strings"]),
     ("os_name == 'a'", {"os_name": 1}, ["the left-hand side must be a string"]),
     ("'a' in extras", {"extras": ["a", 1]}, ["must contain only strings"]),
+    # Serialization failure when a marker string contains both quote characters.
+    ("os_name == 'a\\x27b\"c'", "to_string", ["Cannot serialize marker value containing both quote characters"]),
 ]
 
 def _failure_subject_impl(ctx):
     m = markers.parse(ctx.attr.marker)
-    if ctx.attr.env_overrides:
+    if ctx.attr.to_string:
+        markers.to_string(m)
+    elif ctx.attr.env_overrides:
         env = dict(_ENV)
         for k, v in json.decode(ctx.attr.env_overrides).items():
             if v == None:
@@ -443,6 +451,7 @@ _failure_subject = rule(
     attrs = {
         "env_overrides": attr.string(),
         "marker": attr.string(mandatory = True),
+        "to_string": attr.bool(),
     },
 )
 
@@ -453,7 +462,8 @@ def _failure_tests(name):
     for i, (marker, overrides, fragments) in enumerate(_FAILURES):
         test_name = "{}_{}".format(name, i)
         env_overrides = ""
-        if overrides != None:
+        to_string = overrides == "to_string"
+        if overrides != None and not to_string:
             encoded = {}
             for k, v in overrides.items():
                 encoded[k] = {"tuple": list(v)} if type(v) == "tuple" else v
@@ -463,6 +473,7 @@ def _failure_tests(name):
             name = test_name + "_subject",
             marker = marker,
             env_overrides = env_overrides,
+            to_string = to_string,
         )
         expect_failure_test(test_name, test_name + "_subject", fragments)
         names.append(test_name)

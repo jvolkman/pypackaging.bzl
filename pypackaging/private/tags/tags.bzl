@@ -9,6 +9,8 @@ See README.md for details.
 visibility(["//", "//pypackaging/..."])
 
 _DIGITS = "0123456789"
+_IDENT_START = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_"
+_IDENT_CHARS = _IDENT_START + _DIGITS
 
 # Highest glibc minor version assumed for every glibc major version older
 # than the requested one (packaging's _LAST_GLIBC_MINOR default).
@@ -96,11 +98,11 @@ def _mac_binary_formats(version, cpu_arch):
     if cpu_arch == "x86_64":
         if version < (10, 4):
             return []
-        formats.extend(["intel", "fat64", "fat32"])
+        formats.extend(["intel", "fat64", "fat3"])
     elif cpu_arch == "i386":
         if version < (10, 4):
             return []
-        formats.extend(["intel", "fat32", "fat"])
+        formats.extend(["intel", "fat3", "fat"])
     elif cpu_arch == "ppc64":
         if version > (10, 5) or version < (10, 4):
             return []
@@ -108,7 +110,7 @@ def _mac_binary_formats(version, cpu_arch):
     elif cpu_arch == "ppc":
         if version > (10, 6):
             return []
-        formats.extend(["fat32", "fat"])
+        formats.extend(["fat3", "fat"])
 
     if cpu_arch in ("arm64", "x86_64"):
         formats.append("universal2")
@@ -174,20 +176,16 @@ def _match_apple_platform(platform):
 
 def _expand_linux(version, arch, expand_fn):
     archs = _ARCH_FALLBACKS.get(arch, [arch])
-    result = []
+
+    # Like packaging 26.3's `_linux_platforms()`, native `linux_<arch>` tags
+    # come before manylinux/musllinux tags.
+    result = ["linux_" + a for a in archs]
     for a in archs:
         result.extend(expand_fn(version, a))
-    return result, ["linux_" + a for a in archs]
+    return result
 
 def _expand_platform(platform):
-    """Expands a single platform into its compatible platforms.
-
-    Returns:
-        A tuple `(platforms, linux_fallbacks)`. `linux_fallbacks` holds the
-        generic `linux_<arch>` platforms implied by a manylinux/musllinux
-        platform. They are returned separately because packaging gives them
-        the lowest priority, after every manylinux and musllinux platform.
-    """
+    """Expands a single platform into its compatible platforms."""
     if platform.startswith("macosx"):
         # Like pip, any "macosx*" prefix is accepted and kept, e.g.
         # "macosxcustom_10_9_x86_64" -> "macosxcustom_10_8_x86_64", ...
@@ -196,16 +194,16 @@ def _expand_platform(platform):
             name, major, minor, arch = m
             res = _mac_platforms((major, minor), arch)
             if name == "macosx":
-                return res, []
-            return [name + p[len("macosx"):] for p in res], []
+                return res
+            return [name + p[len("macosx"):] for p in res]
     elif platform.startswith("ios"):
         m = _match_apple_platform(platform)
         if m:
             name, major, minor, multiarch = m
             res = _ios_platforms(major, minor, multiarch)
             if name == "ios":
-                return res, []
-            return [name + p[len("ios"):] for p in res], []
+                return res
+            return [name + p[len("ios"):] for p in res]
     elif platform.startswith(("manylinux_", "musllinux_")):
         parts = platform.split("_")
         if len(parts) >= 4 and parts[1].isdigit() and parts[2].isdigit():
@@ -221,9 +219,9 @@ def _expand_platform(platform):
         # Equivalent to pip's re.fullmatch(r"android_(\d+)_(.+)", platform).
         parts = platform.split("_", 2)
         if len(parts) == 3 and parts[1].isdigit() and parts[2]:
-            return _android_platforms(int(parts[1]), parts[2]), []
+            return _android_platforms(int(parts[1]), parts[2])
 
-    return [platform], []
+    return [platform]
 
 def expand_allowed_platforms(platforms):
     """Expands a list of platform strings into their full compatibility order.
@@ -241,24 +239,14 @@ def expand_allowed_platforms(platforms):
 
     seen = {}
     result = []
-    deferred = []
 
     for p in platforms:
         if p in seen:
             continue
-        additions, linux_fallbacks = _expand_platform(p)
-        for add in additions:
+        for add in _expand_platform(p):
             if add not in seen:
                 seen[add] = True
                 result.append(add)
-        deferred.extend(linux_fallbacks)
-
-    # Like packaging's `_linux_platforms()`, the generic `linux_<arch>`
-    # platforms come after all manylinux/musllinux platforms.
-    for add in deferred:
-        if add not in seen:
-            seen[add] = True
-            result.append(add)
 
     return result
 
@@ -267,21 +255,18 @@ def expand_allowed_platforms(platforms):
 # ---------------------------------------------------------------------------
 
 def _is_threaded_cpython(abis):
-    """Whether the first ABI is a free-threaded CPython ABI (e.g. `cp313t`).
+    """Whether the ABIs describe a free-threaded CPython build (e.g. `cp313t`).
 
-    Equivalent to packaging's `re.match(r"cp\\d+(.*)", abis[0])` followed by a
-    check for "t" in the ABI flags.
+    The first version-specific CPython ABI (`cp\\d+(.*)`) or `"abi3t"` decides.
     """
-    if not abis:
-        return False
-    abi = abis[0]
-    if not abi.startswith("cp"):
-        return False
-    flags = abi[2:].lstrip(_DIGITS)
-    if len(flags) == len(abi) - 2:
-        # No digits after "cp".
-        return False
-    return "t" in flags
+    for abi in abis:
+        if abi == "abi3t":
+            return True
+        if abi.startswith("cp"):
+            flags = abi[2:].lstrip(_DIGITS)
+            if len(flags) != len(abi) - 2:
+                return "t" in flags
+    return False
 
 def cpython_tags(python_version, abis, platforms):
     """Generates CPython tags.
@@ -290,8 +275,9 @@ def cpython_tags(python_version, abis, platforms):
 
     Args:
         python_version: The Python version tuple.
-        abis: A list of ABIs. Every `abi3` and `none` entry is removed (they
-            are handled separately); packaging only removes the first of each.
+        abis: A list of ABIs. Every `abi3` and `none` entry (plus `abi3t` for
+            free-threaded builds) is removed since they are handled separately;
+            packaging only removes the first of each.
         platforms: A list of platforms.
 
     Returns:
@@ -301,11 +287,12 @@ def cpython_tags(python_version, abis, platforms):
     version_str = "".join([str(p) for p in python_version[:2]])
     interpreter = "cp" + version_str
 
-    explicit_abis = [abi for abi in (abis or []) if abi not in ("abi3", "none")]
+    abi_list = abis or []
 
-    # Free-threading is detected on the filtered ABI list, before lowercasing,
-    # like packaging.
-    threading = _is_threaded_cpython(explicit_abis)
+    # Free-threading is detected before filtering and lowercasing, like packaging.
+    threading = _is_threaded_cpython(abi_list)
+    ignored_abis = ("abi3", "abi3t", "none") if threading else ("abi3", "none")
+    explicit_abis = [abi for abi in abi_list if abi not in ignored_abis]
 
     platforms = [p.lower() for p in platforms]
     for abi in explicit_abis:
@@ -387,20 +374,20 @@ def get_supported(version = None, platforms = None, impl = None, abis = None):
     host interpreter:
 
     * `manylinux_X_Y_<arch>`, legacy `manylinux1/2010/2014_<arch>` and
-      `musllinux_X_Y_<arch>` are fully expanded, as packaging does for the host
-      platform in `_linux_platforms()`: every older glibc/musl version, the
-      legacy aliases, an `armv8l` -> `armv7l` fallback, and finally
-      `linux_<arch>` (after all other expanded platforms). pip only maps
-      `manylinux2014` -> `manylinux2010`/`manylinux1` and `manylinux2010` ->
-      `manylinux1`. As in packaging, nothing older than glibc 2.17 is emitted
-      on architectures other than x86_64/i686, so `manylinux2010_aarch64`
-      expands to just `linux_aarch64`.
+      `musllinux_X_Y_<arch>` are fully expanded, as packaging 26.3 does for the
+      host platform in `_linux_platforms()`: native `linux_<arch>` first, then
+      every older glibc/musl version with legacy aliases and `armv8l` ->
+      `armv7l` fallback. pip only maps `manylinux2014` -> `manylinux2010`/
+      `manylinux1` and `manylinux2010` -> `manylinux1`. As in packaging,
+      nothing older than glibc 2.17 is emitted on architectures other than
+      x86_64/i686, so `manylinux2010_aarch64` expands to just `linux_aarch64`.
     * `platforms=None`, `[]`, or platforms that all expand to nothing (e.g.
       `macosx_9_0_x86_64`) mean `["any"]`, and `abis=None` means no
       interpreter-specific ABIs; pip uses the host's platforms and ABIs.
       `version` is required and `impl` defaults to `"cp"`.
-    * Every `"abi3"` and `"none"` entry in `abis` is ignored for CPython;
-      packaging only removes the first occurrence of each.
+    * Every `"abi3"` and `"none"` entry (plus `"abi3t"` for free-threaded
+      builds) in `abis` is ignored for CPython; packaging only removes the
+      first occurrence of each.
 
     Tags are lowercase, like packaging's `Tag`.
 
@@ -457,6 +444,22 @@ def _dedupe(items):
             out.append(item)
     return out
 
+def _is_valid_interpreter(s):
+    if not s:
+        return False
+    c = s[0]
+    if c < "\200" and c not in _IDENT_START:
+        return False
+    rest = s.lstrip(_IDENT_CHARS)
+    if not rest:
+        return True
+
+    # buildifier: disable=string-iteration
+    for ch in rest.elems():
+        if ch < "\200" and ch not in _IDENT_CHARS:
+            return False
+    return True
+
 def parse_tag(tag, validate_order = False):
     """Parses the provided tag into a list of Tag structs.
 
@@ -466,8 +469,8 @@ def parse_tag(tag, validate_order = False):
     have `interpreter`, `abi` and `platform` fields, are lowercased like
     packaging's `Tag`, and compare equal by value.
 
-    Like packaging, empty components (e.g. `py3--any`) are not rejected; they
-    produce tags with empty fields that never match a supported tag.
+    Like packaging 26.3, empty components (e.g. `py3--any`, `py3-none-any.`)
+    and non-identifier interpreter tags (e.g. `2-none-any`) fail.
 
     Args:
         tag: The tag to parse (e.g., "py3-none-any").
@@ -480,16 +483,25 @@ def parse_tag(tag, validate_order = False):
         components = tag.lower().split("-")
         if len(components) != 3:
             fail("Invalid tag: {}".format(tag))
+        for component in components:
+            if not component:
+                fail("Invalid tag: tag {} has an empty component: {}".format(repr(tag), repr(component)))
+        if not _is_valid_interpreter(components[0]):
+            fail("Invalid tag: tag {} has an invalid interpreter: {}".format(repr(tag), repr(components[0])))
         return [struct(
             interpreter = components[0],
             abi = components[1],
             platform = components[2],
         )]
 
+    raw_components = tag.split("-")
+    if len(raw_components) != 3:
+        fail("Invalid tag: {}".format(tag))
+    for component in raw_components:
+        if not component or "" in component.split("."):
+            fail("Invalid tag: tag {} has an empty component: {}".format(repr(tag), repr(component)))
+
     if validate_order:
-        raw_components = tag.split("-")
-        if len(raw_components) != 3:
-            fail("Invalid tag: {}".format(tag))
         for component in raw_components:
             if "." in component:
                 parts = component.split(".")
@@ -497,10 +509,10 @@ def parse_tag(tag, validate_order = False):
                     fail("Tag component {} is not in sorted order per PEP 425".format(component))
 
     components = tag.lower().split("-")
-    if len(components) != 3:
-        fail("Invalid tag: {}".format(tag))
-
     interpreters = _dedupe(components[0].split(".")) if "." in components[0] else [components[0]]
+    for interpreter in interpreters:
+        if not _is_valid_interpreter(interpreter):
+            fail("Invalid tag: tag {} has an invalid interpreter: {}".format(repr(tag), repr(interpreter)))
     abis = _dedupe(components[1].split(".")) if "." in components[1] else [components[1]]
     platforms = _dedupe(components[2].split(".")) if "." in components[2] else [components[2]]
 

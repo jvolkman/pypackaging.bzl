@@ -103,6 +103,7 @@ def _test_freethreaded_impl(env, _target):
 def _test_expand_allowed_platforms_manylinux_impl(env, _target):
     platforms = expand_allowed_platforms(["manylinux_2_17_x86_64"])
     env.expect.that_collection(platforms).contains_exactly([
+        "linux_x86_64",
         "manylinux_2_17_x86_64",
         "manylinux2014_x86_64",
         "manylinux_2_16_x86_64",
@@ -119,46 +120,45 @@ def _test_expand_allowed_platforms_manylinux_impl(env, _target):
         "manylinux_2_6_x86_64",
         "manylinux_2_5_x86_64",
         "manylinux1_x86_64",
-        "linux_x86_64",
     ]).in_order()
 
 def _test_expand_allowed_platforms_armv8l_impl(env, _target):
     platforms = expand_allowed_platforms(["manylinux_2_17_armv8l"])
     env.expect.that_collection(platforms).contains_exactly([
+        "linux_armv8l",
+        "linux_armv7l",
         "manylinux_2_17_armv8l",
         "manylinux2014_armv8l",
         "manylinux_2_17_armv7l",
         "manylinux2014_armv7l",
-        "linux_armv8l",
-        "linux_armv7l",
     ]).in_order()
 
 def _test_expand_allowed_platforms_musllinux_order_impl(env, _target):
     platforms = expand_allowed_platforms(["musllinux_1_2_x86_64"])
     env.expect.that_collection(platforms).contains_exactly([
+        "linux_x86_64",
         "musllinux_1_2_x86_64",
         "musllinux_1_1_x86_64",
         "musllinux_1_0_x86_64",
-        "linux_x86_64",
     ]).in_order()
 
 def _test_expand_allowed_platforms_legacy_order_impl(env, _target):
     platforms = expand_allowed_platforms(["manylinux2014_aarch64"])
     env.expect.that_collection(platforms).contains_exactly([
+        "linux_aarch64",
         "manylinux_2_17_aarch64",
         "manylinux2014_aarch64",
-        "linux_aarch64",
     ]).in_order()
 
 def _test_expand_allowed_platforms_many_and_musl_order_impl(env, _target):
-    # Matches packaging's _linux_platforms(): manylinux, then musllinux, then linux.
+    # Matches packaging 26.3's _linux_platforms(): linux, then manylinux, then musllinux.
     platforms = expand_allowed_platforms(["manylinux_2_17_aarch64", "musllinux_1_1_aarch64"])
     env.expect.that_collection(platforms).contains_exactly([
+        "linux_aarch64",
         "manylinux_2_17_aarch64",
         "manylinux2014_aarch64",
         "musllinux_1_1_aarch64",
         "musllinux_1_0_aarch64",
-        "linux_aarch64",
     ]).in_order()
 
     # An explicitly requested linux_<arch> keeps its position.
@@ -172,24 +172,24 @@ def _test_expand_allowed_platforms_many_and_musl_order_impl(env, _target):
 def _test_get_supported_linux_priority_impl(env, _target):
     tags = get_supported(version = "311", platforms = ["manylinux_2_28_x86_64"], impl = "cp", abis = ["cp311"])
 
-    # Same priority as packaging 26.2: the newest manylinux tag first and the
-    # generic linux tag after all manylinux tags for a given ABI.
-    env.expect.that_str(tags[0]).equals("cp311-cp311-manylinux_2_28_x86_64")
-    env.expect.that_int(tags.index("cp311-cp311-linux_x86_64")).equals(27)
-    env.expect.that_str(tags[26]).equals("cp311-cp311-manylinux1_x86_64")
-    env.expect.that_str(tags[28]).equals("cp311-abi3-manylinux_2_28_x86_64")
+    # Same priority as packaging 26.3: native linux_<arch> first, then newest
+    # manylinux down to manylinux1 for a given ABI.
+    env.expect.that_str(tags[0]).equals("cp311-cp311-linux_x86_64")
+    env.expect.that_str(tags[1]).equals("cp311-cp311-manylinux_2_28_x86_64")
+    env.expect.that_str(tags[27]).equals("cp311-cp311-manylinux1_x86_64")
+    env.expect.that_str(tags[28]).equals("cp311-abi3-linux_x86_64")
 
     tags = get_supported(version = "312", platforms = ["musllinux_1_2_x86_64"], impl = "cp", abis = ["cp312"])
     env.expect.that_collection(tags[:5]).contains_exactly([
+        "cp312-cp312-linux_x86_64",
         "cp312-cp312-musllinux_1_2_x86_64",
         "cp312-cp312-musllinux_1_1_x86_64",
         "cp312-cp312-musllinux_1_0_x86_64",
-        "cp312-cp312-linux_x86_64",
-        "cp312-abi3-musllinux_1_2_x86_64",
+        "cp312-abi3-linux_x86_64",
     ]).in_order()
 
 def _test_freethreaded_filtered_abis_impl(env, _target):
-    # abi3/none are removed before checking the first ABI, like packaging.
+    # abi3/none are skipped when looking for the first CPython ABI, like packaging.
     tags = cpython_tags((3, 13), ["abi3", "cp313t"], ["any"])
     env.expect.that_collection(tags).contains_exactly([
         "cp313-cp313t-any",
@@ -201,12 +201,25 @@ def _test_freethreaded_filtered_abis_impl(env, _target):
     env.expect.that_collection(tags).contains("cp313-abi3t-any")
     env.expect.that_collection(tags).not_contains("cp313-abi3-any")
 
+    # Explicit abi3t isn't duplicated (packaging 26.3 #1245).
+    tags = cpython_tags((3, 15), ["cp315t", "abi3t"], ["any"])
+    env.expect.that_int(len([t for t in tags if t == "cp315-abi3t-any"])).equals(1)
+
+    # Generic ABI before cp313t or explicit abi3t still selects free-threaded (#1555).
+    tags = cpython_tags((3, 13), ["generic", "cp313t"], ["any"])
+    env.expect.that_collection(tags).contains("cp313-abi3t-any")
+    env.expect.that_collection(tags).not_contains("cp313-abi3-any")
+
+    tags = cpython_tags((3, 13), ["abi3t"], ["any"])
+    env.expect.that_collection(tags).contains("cp313-abi3t-any")
+    env.expect.that_int(len([t for t in tags if t == "cp313-abi3t-any"])).equals(1)
+
     # "cp" must be followed by digits for the ABI to count as free-threaded.
     tags = cpython_tags((3, 13), ["cpt"], ["any"])
     env.expect.that_collection(tags).contains("cp313-abi3-any")
     env.expect.that_collection(tags).not_contains("cp313-abi3t-any")
 
-    # A free-threaded ABI that isn't first doesn't count.
+    # A free-threaded ABI after a non-free-threaded cp ABI doesn't count.
     tags = cpython_tags((3, 13), ["cp313", "cp313t"], ["any"])
     env.expect.that_collection(tags).contains("cp313-abi3-any")
     env.expect.that_collection(tags).not_contains("cp313-abi3t-any")
@@ -257,12 +270,16 @@ def _test_manylinux_glibc_major_3_impl(env, _target):
     env.expect.that_int(len(platforms)).equals(1 + 51 + 34 + 1)
 
     tags = get_supported(version = "311", platforms = ["manylinux_3_0_x86_64"], impl = "cp", abis = ["cp311"])
-    env.expect.that_str(tags[0]).equals("cp311-cp311-manylinux_3_0_x86_64")
-    env.expect.that_str(tags[1]).equals("cp311-cp311-manylinux_2_50_x86_64")
-    env.expect.that_int(tags.index("cp311-cp311-linux_x86_64")).equals(50)
+    env.expect.that_str(tags[0]).equals("cp311-cp311-linux_x86_64")
+    env.expect.that_str(tags[1]).equals("cp311-cp311-manylinux_3_0_x86_64")
+    env.expect.that_str(tags[2]).equals("cp311-cp311-manylinux_2_50_x86_64")
 
 def _test_parse_tag_impl(env, _target):
     env.expect.that_collection(_tag_strs(parse_tag("py3-none-any"))).contains_exactly(["py3-none-any"])
+
+    # Valid identifier interpreters (packaging 26.3 #1351).
+    for interp in ["sillywalk", "graalpy311", "_custom"]:
+        env.expect.that_collection(_tag_strs(parse_tag(interp + "-none-any"))).contains_exactly([interp + "-none-any"])
 
     # Compressed tag sets expand in component order; tags are lowercased.
     env.expect.that_collection(_tag_strs(parse_tag("CP311.cp312-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64"))).contains_exactly([
@@ -290,16 +307,6 @@ def _test_parse_tag_dedupe_impl(env, _target):
         "py2-none-any",
     ]).in_order()
 
-def _test_parse_tag_empty_components_impl(env, _target):
-    # Like packaging, empty components are accepted.
-    env.expect.that_collection(_tag_strs(parse_tag("py3--any"))).contains_exactly(["py3--any"])
-    env.expect.that_collection(_tag_strs(parse_tag("-none-any"))).contains_exactly(["-none-any"])
-    env.expect.that_collection(_tag_strs(parse_tag("py3-none-any."))).contains_exactly([
-        "py3-none-any",
-        "py3-none-",
-    ]).in_order()
-    env.expect.that_collection(_tag_strs(parse_tag("--"))).contains_exactly(["--"])
-
 def _test_expand_apple_custom_prefix_impl(env, _target):
     # Like pip, a custom "macosx*" prefix is kept during expansion.
     platforms = expand_allowed_platforms(["macosxcustom_10_9_x86_64"])
@@ -307,7 +314,7 @@ def _test_expand_apple_custom_prefix_impl(env, _target):
         "macosxcustom_10_9_x86_64",
         "macosxcustom_10_9_intel",
         "macosxcustom_10_9_fat64",
-        "macosxcustom_10_9_fat32",
+        "macosxcustom_10_9_fat3",
         "macosxcustom_10_9_universal2",
         "macosxcustom_10_9_universal",
     ]).in_order()
@@ -369,8 +376,8 @@ def _test_select_compatible_impl(env, _target):
     ]
     tagged = [(f, parse_tag(f[len("foo-1.0-"):-len(".whl")])) for f in filenames]
     expected = [
-        "foo-1.0-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
         "foo-1.0-cp311-cp311-linux_x86_64.whl",
+        "foo-1.0-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
         "foo-1.0-cp311-abi3-manylinux_2_28_x86_64.whl",
         "foo-1.0-py3-none-any.whl",
         "foo-1.0-py2.py3-none-any.whl",
@@ -410,7 +417,7 @@ def _test_get_supported_no_platforms_impl(env, _target):
         ).contains_exactly(expected).in_order()
 
 def _test_get_supported_fixtures_impl(env, _target):
-    # Expected values come from packaging 26.2 with pip 25.2's get_supported
+    # Expected values come from packaging 26.3 with pip 25.2's get_supported
     # wrapper (and packaging's own linux expansion for manylinux/musllinux).
     for f in GET_SUPPORTED_FIXTURES:
         supported = get_supported(version = f.version, platforms = f.platforms, impl = f.impl, abis = f.abis)
@@ -428,6 +435,14 @@ def tags_test_suite(name):
     for test_name, tag, validate_order, expected in [
         ("test_parse_tag_wrong_parts", "py3-none", False, "Invalid tag"),
         ("test_parse_tag_unsorted", "py3.py2-none-any", True, "not in sorted order"),
+        ("test_parse_tag_empty_abi", "py3--any", False, "empty component"),
+        ("test_parse_tag_empty_interp", "-none-any", False, "empty component"),
+        ("test_parse_tag_empty_platform_member", "py3-none-any.", False, "empty component"),
+        ("test_parse_tag_all_empty", "--", False, "empty component"),
+        ("test_parse_tag_numeric_interp", "2-none-any", False, "invalid interpreter"),
+        ("test_parse_tag_dotted_numeric_interp", "2.7.6-none-any", False, "invalid interpreter"),
+        ("test_parse_tag_mixed_numeric_interp", "py3.2-none-any", False, "invalid interpreter"),
+        ("test_parse_tag_plus_interp", "py+3-none-any", False, "invalid interpreter"),
     ]:
         util.helper_target(_parse_tag_subject, name = test_name + "_subject", tag = tag, validate_order = validate_order)
         expect_failure_test(test_name, test_name + "_subject", expected)
@@ -456,7 +471,6 @@ def tags_test_suite(name):
             "test_manylinux_glibc_major_3": _test_manylinux_glibc_major_3_impl,
             "test_parse_tag": _test_parse_tag_impl,
             "test_parse_tag_dedupe": _test_parse_tag_dedupe_impl,
-            "test_parse_tag_empty_components": _test_parse_tag_empty_components_impl,
             "test_expand_apple_custom_prefix": _test_expand_apple_custom_prefix_impl,
             "test_expand_hyphen_normalization": _test_expand_hyphen_normalization_impl,
             "test_priority_map": _test_priority_map_impl,

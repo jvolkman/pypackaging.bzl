@@ -2,7 +2,7 @@
 
 Derived from pypa/packaging: packaging/requirements.py and packaging/_parser.py
 (Apache 2.0 / BSD).
-Baseline: pypa/packaging 26.2
+Baseline: pypa/packaging 26.3
 """
 
 load(
@@ -14,7 +14,7 @@ load(
     "skip_ws",
     "syntax_error",
 )
-load("//pypackaging/private/specifiers:specifiers.bzl", "match_specifier_token", "specifiers")
+load("//pypackaging/private/specifiers:specifiers.bzl", "match_specifier_token", "try_parse_specifier")
 load("//pypackaging/private/utils:utils.bzl", "utils")
 load("//pypackaging/private/version:version.bzl", "strip_whitespace")
 
@@ -163,7 +163,10 @@ def _parse(req_str):
                 pos += token_len
                 specs.append(spec)
                 if src.startswith(".*", pos):
-                    syntax_error(ctx, ".* suffix can only be used with `==` or `!=` operators", token_start, pos + 1)
+                    msg = (
+                        ".* suffix cannot be used with pre-release, post-release, dev or local versions" if spec.operator in ("==", "!=") else ".* suffix can only be used with `==` or `!=` operators"
+                    )
+                    syntax_error(ctx, msg, token_start, pos + 1)
                 if pos + 1 < n and src[pos] == "+" and src[pos + 1] in _LOCAL_LABEL_START:
                     syntax_error(ctx, "Local version label can only be used with `==` or `!=` operators", token_start, pos)
                 pos = skip_ws(src, pos, n)
@@ -207,7 +210,7 @@ def _parse_requirement(req_str):
     """Parses a PEP 508 requirement (dependency specifier) string.
 
     Accepts and rejects exactly what `packaging.requirements.Requirement`
-    (packaging 26.2) does, failing with an upstream-style message that shows
+    (packaging 26.3) does, failing with an upstream-style message that shows
     the input and a caret at the error position.
 
     Differences from upstream's `Requirement` object:
@@ -285,8 +288,17 @@ def _specifier_set(specs):
     for spec in specs:
         if spec.operator == "===" and "," in spec.version:
             # Only an `===` version can contain a comma. Upstream joins the
-            # specifiers and splits the result on commas, which fails here.
-            return specifiers.parse_set(",".join([s.operator + s.version for s in specs]))
+            # specifiers and splits the result on commas, wrapping invalid
+            # specifier errors as InvalidRequirement (packaging 26.3).
+            parsed = []
+            for item in ",".join([s.operator + s.version for s in specs]).split(","):
+                stripped = strip_whitespace(item)
+                if stripped:
+                    sp = try_parse_specifier(stripped)
+                    if sp == None:
+                        fail("Invalid requirement: Invalid specifier: {}".format(stripped))
+                    parsed.append(sp)
+            return struct(specs = parsed)
     return struct(specs = specs)
 
 def _spec_str(spec):

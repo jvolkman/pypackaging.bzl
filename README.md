@@ -100,7 +100,8 @@ the [changelog](CHANGELOG.md).
 
 ## Differences from pypa/packaging
 
-`pypackaging.bzl` follows `packaging` 26.2 and `pip`'s `get_supported` wrapper.
+`pypackaging.bzl` follows `packaging` 26.3 (plus set-of-extras marker
+evaluation from `pypa/packaging#1438`) and `pip`'s `get_supported` wrapper.
 Because Starlark has no classes, exceptions, or host Python runtime, the API
 differs in the following ways:
 
@@ -116,8 +117,9 @@ differs in the following ways:
     which evaluates to `True`).
   - `markers.evaluate` requires an explicit `environment` dict containing every
     referenced variable (`extra` defaults to `""`).
-  - `environment["extra"]` may also be a list or tuple of active extras
-    (uv-compatible extension for `==` and `!=`).
+  - `environment["extra"]` may also be a list, tuple, or set of active extras
+    for `==` and `!=` (matching `pypa/packaging#1438`; an empty collection
+    evaluates like `""`).
   - `\N{...}` named Unicode escapes in marker string literals are not supported.
 - **Requirements**: `requirements.parse` normalizes `name` and returns sorted,
   deduplicated, normalized `extras` (with original spellings in `raw_name` and
@@ -131,7 +133,7 @@ differs in the following ways:
 
 ## Upstream Sources
 
-1. **[pypa/packaging](https://github.com/pypa/packaging)** (baseline: **26.2**,
+1. **[pypa/packaging](https://github.com/pypa/packaging)** (baseline: **26.3**,
    Apache-2.0 OR BSD-2-Clause): PEP 440 versions and specifiers, PEP 508
    markers and requirements, PEP 425 compatibility tags, and filename/name
    utilities.

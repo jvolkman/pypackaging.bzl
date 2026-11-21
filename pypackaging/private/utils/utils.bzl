@@ -65,9 +65,7 @@ def is_normalized_name(name):
     """Check if a name is already normalized.
 
     A normalized name is lowercase ASCII letters and digits separated by
-    single `-`. packaging 26.2's regex also accepts `--` after a
-    one-character first segment (`a--b`, `a--b-c`); this function doesn't,
-    since `canonicalize_name` never produces it.
+    single `-` (matching packaging 26.3).
 
     Args:
         name: The name to check.
@@ -159,7 +157,7 @@ def parse_wheel_filename(filename, validate_order = False):
     name_part = parts[0]
 
     # See PEP 427 for the rules on escaping the project name.
-    if "__" in name_part or not _is_valid_wheel_name(name_part):
+    if not name_part or "__" in name_part or not _is_valid_wheel_name(name_part):
         fail("Invalid project name: {}".format(repr(filename)))
 
     name = canonicalize_name(name_part)
@@ -224,6 +222,9 @@ def parse_sdist_filename(filename):
 
     name_part = file_stem[:idx]
     version_part = file_stem[idx + 1:]
+
+    if not name_part:
+        fail("Invalid sdist filename (empty project name): {}".format(repr(filename)))
 
     name = canonicalize_name(name_part)
     ver = try_parse_version(version_part)

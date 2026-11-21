@@ -62,7 +62,7 @@ def _check_markers():
         "extra == 'test' with extra = 'test'",
     )
 
-    # Non-standard extension: a list-valued "extra" tests membership.
+    # Set-of-extras evaluation (matching pypa/packaging#1438).
     _check(
         markers.evaluate(markers.parse("extra == 'b'"), dict(_LINUX_CP311_ENV, extra = ["a", "b"])),
         "extra == 'b' with extra = ['a', 'b']",

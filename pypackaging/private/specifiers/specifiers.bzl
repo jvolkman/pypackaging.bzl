@@ -1,7 +1,7 @@
 """PEP 440 Version Specifiers.
 
 Derived from pypa/packaging: packaging/specifiers.py (Apache 2.0 / BSD).
-Baseline: pypa/packaging 26.2
+Baseline: pypa/packaging 26.3
 
 Differences from `packaging.specifiers`:
 

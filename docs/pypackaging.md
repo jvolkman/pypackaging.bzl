@@ -14,7 +14,8 @@ pypackaging.markers.evaluate(<a href="#pypackaging.markers.evaluate-markers">mar
 
 Evaluates a parsed marker expression against an environment.
 
-Semantics follow `packaging.markers.Marker.evaluate` (packaging 26.2):
+Semantics follow `packaging.markers.Marker.evaluate` (packaging 26.3, plus
+set-of-extras evaluation from pypa/packaging#1438):
 
 - `python_version`, `python_full_version`, `implementation_version` and
   `platform_release` are compared as PEP 440 versions when `op + value` is a
@@ -30,16 +31,16 @@ Semantics follow `packaging.markers.Marker.evaluate` (packaging 26.2):
   / PEP 735) on both sides.
 
 There is no default environment: every variable the marker references must
-be present, except `extra`, which defaults to "" (None is also treated as
-""). Callers must supply `extras` / `dependency_groups` (as lists of
-strings) when markers use them.
+be present, except `extra`, which defaults to "" (None and empty
+collections are also treated as ""). Callers must supply `extras` /
+`dependency_groups` (as lists/sets of strings) when markers use them.
 
-Non-standard extension (uv-compatible): `environment["extra"]` may be a
-list or tuple of strings, the set of active extras (uv also uses this for
-its conflict tokens). Each element is normalized. `extra == X` and
-`X == extra` are True iff X is in the set; `!=` is True iff it is not. An
-empty list therefore makes `==` False and `!=` True. Any other operator
-(including `===`, which fails for a string `extra` too) fails.
+`environment["extra"]` may also be a list, tuple, or set of strings
+representing all active extras (matching pypa/packaging#1438). Each element
+is normalized. `extra == X` and `X == extra` are True iff X is in the set;
+`!=` is True iff it is not. An empty collection behaves like `""` (no extra
+selected). Any operator other than `==` and `!=` on a non-empty collection
+fails.
 
 
 **PARAMETERS**
@@ -68,11 +69,12 @@ pypackaging.markers.parse(<a href="#pypackaging.markers.parse-marker_str">marker
 Parses a PEP 508 marker string into an AST-like structure.
 
 The grammar, error conditions and value processing follow
-`packaging.markers.Marker` (packaging 26.2): quoted strings are decoded like
+`packaging.markers.Marker` (packaging 26.3): quoted strings are decoded like
 Python string literals (`\N{...}` escapes are not supported), dotted
 variable names are mapped to their underscore form, `python_implementation`
-is an alias for `platform_python_implementation`, and the value compared
-against `extra` is normalized (PEP 685) at every nesting level.
+is an alias for `platform_python_implementation`, and values compared
+against `extra`, `extras` and `dependency_groups` are normalized (PEP 685
+/ PEP 735) at every nesting level.
 
 Unlike upstream, an empty or whitespace-only string is accepted and
 returns `[]`, which `evaluate` treats as always true.
@@ -109,9 +111,10 @@ pypackaging.markers.to_string(<a href="#pypackaging.markers.to_string-markers">m
 
 Serializes a parsed marker tree like upstream `str(Marker)`.
 
-Variables and `extra` values are emitted in their normalized form, string
-values are double-quoted, and redundant outer parentheses around a group
-are dropped.
+Variables and `extra`/`extras`/`dependency_groups` values are emitted in
+their normalized form, string values are double-quoted (or single-quoted
+when the value contains `"`), and redundant outer parentheses around a
+group are dropped. Fails if a string value contains both `"` and `'`.
 
 
 **PARAMETERS**
@@ -139,7 +142,7 @@ pypackaging.requirements.parse(<a href="#pypackaging.requirements.parse-req_str"
 Parses a PEP 508 requirement (dependency specifier) string.
 
 Accepts and rejects exactly what `packaging.requirements.Requirement`
-(packaging 26.2) does, failing with an upstream-style message that shows
+(packaging 26.3) does, failing with an upstream-style message that shows
 the input and a caret at the error position.
 
 Differences from upstream's `Requirement` object:
@@ -477,20 +480,20 @@ Differences from pip, all because this runs at analysis time without a
 host interpreter:
 
 * `manylinux_X_Y_<arch>`, legacy `manylinux1/2010/2014_<arch>` and
-  `musllinux_X_Y_<arch>` are fully expanded, as packaging does for the host
-  platform in `_linux_platforms()`: every older glibc/musl version, the
-  legacy aliases, an `armv8l` -> `armv7l` fallback, and finally
-  `linux_<arch>` (after all other expanded platforms). pip only maps
-  `manylinux2014` -> `manylinux2010`/`manylinux1` and `manylinux2010` ->
-  `manylinux1`. As in packaging, nothing older than glibc 2.17 is emitted
-  on architectures other than x86_64/i686, so `manylinux2010_aarch64`
-  expands to just `linux_aarch64`.
+  `musllinux_X_Y_<arch>` are fully expanded, as packaging 26.3 does for the
+  host platform in `_linux_platforms()`: native `linux_<arch>` first, then
+  every older glibc/musl version with legacy aliases and `armv8l` ->
+  `armv7l` fallback. pip only maps `manylinux2014` -> `manylinux2010`/
+  `manylinux1` and `manylinux2010` -> `manylinux1`. As in packaging,
+  nothing older than glibc 2.17 is emitted on architectures other than
+  x86_64/i686, so `manylinux2010_aarch64` expands to just `linux_aarch64`.
 * `platforms=None`, `[]`, or platforms that all expand to nothing (e.g.
   `macosx_9_0_x86_64`) mean `["any"]`, and `abis=None` means no
   interpreter-specific ABIs; pip uses the host's platforms and ABIs.
   `version` is required and `impl` defaults to `"cp"`.
-* Every `"abi3"` and `"none"` entry in `abis` is ignored for CPython;
-  packaging only removes the first occurrence of each.
+* Every `"abi3"` and `"none"` entry (plus `"abi3t"` for free-threaded
+  builds) in `abis` is ignored for CPython; packaging only removes the
+  first occurrence of each.
 
 Tags are lowercase, like packaging's `Tag`.
 
@@ -528,8 +531,8 @@ duplicates, in the order the components appear in the tag. Tag structs
 have `interpreter`, `abi` and `platform` fields, are lowercased like
 packaging's `Tag`, and compare equal by value.
 
-Like packaging, empty components (e.g. `py3--any`) are not rejected; they
-produce tags with empty fields that never match a supported tag.
+Like packaging 26.3, empty components (e.g. `py3--any`, `py3-none-any.`)
+and non-identifier interpreter tags (e.g. `2-none-any`) fail.
 
 
 **PARAMETERS**
@@ -703,9 +706,7 @@ pypackaging.utils.is_normalized_name(<a href="#pypackaging.utils.is_normalized_n
 Check if a name is already normalized.
 
 A normalized name is lowercase ASCII letters and digits separated by
-single `-`. packaging 26.2's regex also accepts `--` after a
-one-character first segment (`a--b`, `a--b-c`); this function doesn't,
-since `canonicalize_name` never produces it.
+single `-` (matching packaging 26.3).
 
 
 **PARAMETERS**
