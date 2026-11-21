@@ -1,8 +1,7 @@
 """Tests for the public entrypoint //:pypackaging.bzl."""
 
-load("@rules_testing//lib:analysis_test.bzl", "analysis_test", "test_suite")
-load("@rules_testing//lib:util.bzl", "util")
 load("//:pypackaging.bzl", "pypackaging")
+load(":test_helpers.bzl", "unit_test_suite")
 
 # The complete public API of v0.3.0.
 _PUBLIC_API = {
@@ -43,10 +42,6 @@ def _test_full_public_api_impl(env, _target):
         module = getattr(pypackaging, module_name)
         env.expect.where(module = module_name).that_collection(_fields(module)).contains_exactly(functions)
 
-def _test_full_public_api(name):
-    util.helper_target(native.filegroup, name = name + "_subject")
-    analysis_test(name = name, target = name + "_subject", impl = _test_full_public_api_impl)
-
 def _test_result_structs_impl(env, _target):
     p = pypackaging
     cases = [
@@ -61,10 +56,6 @@ def _test_result_structs_impl(env, _target):
     ]
     for what, result, fields in cases:
         env.expect.where(result = what).that_collection(_fields(result)).contains_exactly(fields)
-
-def _test_result_structs(name):
-    util.helper_target(native.filegroup, name = name + "_subject")
-    analysis_test(name = name, target = name + "_subject", impl = _test_result_structs_impl)
 
 def _test_keyword_arguments_impl(env, _target):
     p = pypackaging
@@ -101,10 +92,6 @@ def _test_keyword_arguments_impl(env, _target):
     env.expect.that_str(p.utils.parse_wheel_filename(filename = "foo-1.0-py3-none-any.whl", validate_order = False).name).equals("foo")
     env.expect.that_str(p.utils.parse_sdist_filename(filename = "foo-1.0.tar.gz").name).equals("foo")
 
-def _test_keyword_arguments(name):
-    util.helper_target(native.filegroup, name = name + "_subject")
-    analysis_test(name = name, target = name + "_subject", impl = _test_keyword_arguments_impl)
-
 def _test_readme_examples_impl(env, _target):
     # Keep in sync with the usage example in README.md.
     v = pypackaging.version.parse("1.2.3")
@@ -140,17 +127,13 @@ def _test_readme_examples_impl(env, _target):
     env.expect.that_str(pypackaging.utils.canonicalize_name("Foo_Bar")).equals("foo-bar")
     env.expect.that_str(pypackaging.utils.parse_wheel_filename("foo-1.0-py3-none-any.whl").name).equals("foo")
 
-def _test_readme_examples(name):
-    util.helper_target(native.filegroup, name = name + "_subject")
-    analysis_test(name = name, target = name + "_subject", impl = _test_readme_examples_impl)
-
 def public_api_test_suite(name):
-    test_suite(
+    unit_test_suite(
         name = name,
-        tests = [
-            _test_full_public_api,
-            _test_keyword_arguments,
-            _test_readme_examples,
-            _test_result_structs,
-        ],
+        tests = {
+            "test_full_public_api": _test_full_public_api_impl,
+            "test_keyword_arguments": _test_keyword_arguments_impl,
+            "test_readme_examples": _test_readme_examples_impl,
+            "test_result_structs": _test_result_structs_impl,
+        },
     )

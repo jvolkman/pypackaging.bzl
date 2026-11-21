@@ -29,12 +29,14 @@ load(
     "scan_version_prefix",
     "strip_whitespace",
     "try_parse_version",
-    "version_key",
     "version_to_string",
     "whitespace_len_at",
 )
 
 visibility(["//", "//pypackaging/..."])
+
+_TWO_CHAR_OPS = {"==": True, "!=": True, "~=": True, "<=": True, ">=": True}
+_OP_FIRST_CHARS = "=!<~>"
 
 def _fail_invalid_specifier(spec):
     fail("Invalid specifier: {}".format(spec))
@@ -59,16 +61,19 @@ def try_parse_specifier(spec_str):
 
 def _try_parse_stripped_specifier(stripped):
     """Like `try_parse_specifier`, for a string without surrounding whitespace."""
-    if stripped.startswith("==="):
+    if not stripped or stripped[0] not in _OP_FIRST_CHARS:
+        return None
+    if stripped[:3] == "===":
         version = lstrip_whitespace(stripped[3:])
         if ";" in version or ")" in version or contains_whitespace(version):
             return None
         return struct(operator = "===", version = version, parsed_version = None)
 
-    if stripped.startswith(("==", "!=", "~=", "<=", ">=")):
-        operator, version = stripped[:2], lstrip_whitespace(stripped[2:])
-    elif stripped.startswith(("<", ">")):
-        operator, version = stripped[:1], lstrip_whitespace(stripped[1:])
+    op2 = stripped[:2]
+    if op2 in _TWO_CHAR_OPS:
+        operator, version = op2, lstrip_whitespace(stripped[2:])
+    elif stripped[0] == "<" or stripped[0] == ">":
+        operator, version = stripped[0], lstrip_whitespace(stripped[1:])
     else:
         return None
 
@@ -109,9 +114,6 @@ def parse_specifier(spec_str):
         _fail_invalid_specifier(spec_str)
     return spec
 
-# Operators in the order of the alternatives in packaging's specifier regex.
-_TOKEN_OPERATORS = ("==", "!=", "~=", "<=", ">=", "<", ">")
-
 def match_specifier_token(s):
     """Matches packaging's SPECIFIER token at the start of `s`.
 
@@ -130,7 +132,10 @@ def match_specifier_token(s):
         (see `parse_specifier`), or `(0, None)` if `s` doesn't start with a
         specifier.
     """
-    if s.startswith("==="):
+    if not s or s[0] not in _OP_FIRST_CHARS:
+        return 0, None
+
+    if s[:3] == "===":
         # ===\s*[^\s;)]*
         rest = lstrip_whitespace(s[3:])
         end = 0
@@ -141,19 +146,25 @@ def match_specifier_token(s):
         spec = struct(operator = "===", version = rest[:end], parsed_version = None)
         return len(s) - len(rest) + end, spec
 
-    for op in _TOKEN_OPERATORS:
-        if s.startswith(op):
-            rest = lstrip_whitespace(s[len(op):])
-            if op == "==" or op == "!=":
-                n, v = scan_version_prefix(rest, allow_local = True, allow_wildcard = True)
-            elif op == "~=":
-                n, v = scan_version_prefix(rest, allow_local = False, min_release_len = 2)
-            else:
-                n, v = scan_version_prefix(rest, allow_local = False)
-            if not n:
-                return 0, None
-            return len(s) - len(rest) + n, struct(operator = op, version = rest[:n], parsed_version = v)
-    return 0, None
+    op2 = s[:2]
+    if op2 in _TWO_CHAR_OPS:
+        op = op2
+        rest = lstrip_whitespace(s[2:])
+    elif s[0] == "<" or s[0] == ">":
+        op = s[0]
+        rest = lstrip_whitespace(s[1:])
+    else:
+        return 0, None
+
+    if op == "==" or op == "!=":
+        n, v = scan_version_prefix(rest, allow_local = True, allow_wildcard = True)
+    elif op == "~=":
+        n, v = scan_version_prefix(rest, allow_local = False, min_release_len = 2)
+    else:
+        n, v = scan_version_prefix(rest, allow_local = False)
+    if not n:
+        return 0, None
+    return len(s) - len(rest) + n, struct(operator = op, version = rest[:n], parsed_version = v)
 
 def _spec_version(spec):
     """Returns the parsed version of a non-=== specifier."""
@@ -203,7 +214,14 @@ def _matches_parsed(spec, v):
             return False
 
         # >V must not match a post-release of V unless V is itself a post-release.
-        if not sv.is_postrelease and v.is_postrelease and version_key(v.epoch, v.release, v.pre, None, None, None) == sv.key:
+        if (
+            not sv.is_postrelease and
+            v.is_postrelease and
+            sv.dev == None and
+            v.pre == sv.pre and
+            v.key[0] == sv.key[0] and
+            v.key[1] == sv.key[1]
+        ):
             return False
 
         # >V must not match a local version of V.
@@ -217,7 +235,13 @@ def _matches_parsed(spec, v):
             return False
 
         # <V must not match a pre-release of V unless V is itself a pre-release.
-        if not sv.is_prerelease and v.is_prerelease and v.key >= version_key(sv.epoch, sv.release, sv.pre, sv.post, ("dev", 0), None):
+        if (
+            not sv.is_prerelease and
+            v.is_prerelease and
+            v.key[0] == sv.key[0] and
+            v.key[1] == sv.key[1] and
+            (sv.post == None or (v.pre == None and v.post == sv.post))
+        ):
             return False
 
         return True
@@ -309,6 +333,45 @@ def specifier_contains(spec, version, prereleases = None):
         return False
     return not (prereleases == False and v != None and v.is_prerelease)
 
+def _all_match(specs, v, version_str):
+    for spec in specs:
+        if not _matches(spec, v, version_str):
+            return False
+    return True
+
+def _filter_versions(specs, versions, prereleases, default_prereleases):
+    include_prereleases = prereleases if prereleases != None else default_prereleases
+    if prereleases == False:
+        out = []
+        for item in versions:
+            v, version_str = _coerce(item)
+            if (v == None or not v.is_prerelease) and _all_match(specs, v, version_str):
+                out.append(item)
+        return out
+    if include_prereleases:
+        out = []
+        for item in versions:
+            v, version_str = _coerce(item)
+            if _all_match(specs, v, version_str):
+                out.append(item)
+        return out
+
+    # prereleases is None and specs do not imply prereleases: keep matching
+    # prereleases only if no matching final release is found.
+    out = []
+    finals = []
+    has_final = False
+    for item in versions:
+        v, version_str = _coerce(item)
+        if not _all_match(specs, v, version_str):
+            continue
+        out.append(item)
+        if v == None or not v.is_prerelease:
+            finals.append(item)
+            if v != None:
+                has_final = True
+    return finals if has_final else out
+
 def specifier_filter(spec, versions, prereleases = None):
     """Filters versions that satisfy a specifier.
 
@@ -328,26 +391,8 @@ def specifier_filter(spec, versions, prereleases = None):
     Returns:
         The matching items of `versions`, in order.
     """
-    include_prereleases = prereleases if prereleases != None else specifier_prereleases(spec)
-    result = []
-    held_prereleases = []
-    found_final = False
-    for item in versions:
-        v, version_str = _coerce(item)
-        if not _matches(spec, v, version_str):
-            continue
-        if v == None:
-            # Only === can match a string that isn't a valid version.
-            result.append(item)
-        elif not v.is_prerelease or include_prereleases:
-            found_final = True
-            result.append(item)
-        elif prereleases == None:
-            held_prereleases.append(item)
-
-    if not found_final and prereleases == None:
-        result.extend(held_prereleases)
-    return result
+    default_pre = specifier_prereleases(spec) if prereleases == None else None
+    return _filter_versions([spec], versions, prereleases, default_pre)
 
 def parse_specifier_set(spec_set_str):
     """Parses a comma-separated set of specifiers.
@@ -393,14 +438,8 @@ def specifier_set_prereleases(spec_set):
             return True
     return None
 
-def _set_matches(spec_set, v, version_str):
-    for spec in spec_set.specs:
-        if not _matches(spec, v, version_str):
-            return False
-    return True
-
-def _needs_parse(spec_set):
-    for spec in spec_set.specs:
+def _needs_parse(specs):
+    for spec in specs:
         if spec.operator != "===":
             return True
     return False
@@ -425,9 +464,12 @@ def specifier_set_contains(spec_set, version, prereleases = None, installed = No
     Returns:
         True if the version satisfies all specifiers, False otherwise.
     """
-    if type(version) == "string" and prereleases != False and not installed and not _needs_parse(spec_set):
+    specs = spec_set.specs
+    if not specs and (prereleases != False or installed):
+        return True
+    if type(version) == "string" and prereleases != False and not installed and (not specs or (specs[0].operator == "===" and not _needs_parse(specs))):
         # Only === specifiers (or none at all): no need to parse.
-        return _set_matches(spec_set, None, version)
+        return _all_match(specs, None, version)
 
     v, version_str = _coerce(version)
     if v != None and v.is_prerelease:
@@ -435,14 +477,7 @@ def specifier_set_contains(spec_set, version, prereleases = None, installed = No
             prereleases = True
         if prereleases == False:
             return False
-    return _set_matches(spec_set, v, version_str)
-
-def _pep440_filter_prereleases(items, parsed):
-    """Drops pre-releases if there is at least one final release."""
-    for v in parsed:
-        if v != None and not v.is_prerelease:
-            return [item for item, v in zip(items, parsed) if v == None or not v.is_prerelease]
-    return items
+    return _all_match(specs, v, version_str)
 
 def specifier_set_filter(spec_set, versions, prereleases = None):
     """Filters versions that satisfy all specifiers in the set.
@@ -464,22 +499,8 @@ def specifier_set_filter(spec_set, versions, prereleases = None):
     Returns:
         The matching items of `versions`, in order.
     """
-    if prereleases == None:
-        prereleases = specifier_set_prereleases(spec_set)
-
-    items = []
-    parsed = []
-    for item in versions:
-        v, version_str = _coerce(item)
-        if prereleases == False and v != None and v.is_prerelease:
-            continue
-        if _set_matches(spec_set, v, version_str):
-            items.append(item)
-            parsed.append(v)
-
-    if prereleases != None:
-        return items
-    return _pep440_filter_prereleases(items, parsed)
+    default_pre = specifier_set_prereleases(spec_set) if prereleases == None else None
+    return _filter_versions(spec_set.specs, versions, prereleases, default_pre)
 
 specifiers = struct(
     parse = parse_specifier,

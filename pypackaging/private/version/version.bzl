@@ -39,12 +39,14 @@ def _fail_invalid_version(version):
 
 _DIGITS = "0123456789"
 _LOCAL_CHARS = "abcdefghijklmnopqrstuvwxyz0123456789"
-_SEPARATORS = (".", "_", "-")
+_SEPARATORS = "._-"
 
 # Longest labels first.
 _PRE_LABELS = ("alpha", "a", "beta", "b", "preview", "pre", "c", "rc")
 _POST_LABELS = ("post", "rev", "r")
 _DEV_LABELS = ("dev",)
+_PRE_FIRST = "abcpr"
+_POST_FIRST = "pr"
 
 # Sort ranks for pre-release: dev-only < a < b < rc < stable (no pre-release).
 _PRE_RANK = {"a": 0, "b": 1, "rc": 2}
@@ -57,16 +59,20 @@ _LOCAL_STR_RANK = -1  # sorts before all non-negative ints
 # Pre-computed suffix for stable releases (no pre, post, or dev segments).
 _STABLE_SUFFIX = (_PRE_RANK_STABLE, 0, 0, 0, 1, 0)
 
+def _trim_release(release):
+    if release and release[-1] == 0:
+        i = len(release) - 1
+        for _ in range(i):
+            if i and release[i - 1] == 0:
+                i -= 1
+            else:
+                break
+        return release[:i]
+    return release
+
 def _cmpkey(epoch, release, pre, post, dev, local):
     # Strip trailing zeros: 1.0.0 compares equal to 1.
-    len_release = len(release)
-    i = len_release
-    for _ in range(len_release):
-        if i and release[i - 1] == 0:
-            i -= 1
-        else:
-            break
-    trimmed = release if i == len_release else release[:i]
+    trimmed = _trim_release(release)
 
     # Fast path: stable release with no local segment.
     if pre == None and post == None and dev == None and local == None:
@@ -91,14 +97,12 @@ def _cmpkey(epoch, release, pre, post, dev, local):
     if local == None:
         return (epoch, trimmed, suffix)
 
-    cmp_local = []
-    for seg in local:
-        if type(seg) == type(0):
-            cmp_local.append((seg, ""))
-        else:
-            cmp_local.append((_LOCAL_STR_RANK, seg))
+    cmp_local = tuple([
+        (seg, "") if type(seg) == "int" else (_LOCAL_STR_RANK, seg)
+        for seg in local
+    ])
 
-    return (epoch, trimmed, suffix, tuple(cmp_local))
+    return (epoch, trimmed, suffix, cmp_local)
 
 _PRE_NORMALIZATION = {
     "alpha": "a",
@@ -120,13 +124,7 @@ def get_public_key(v):
     Returns:
         A sort key, comparable with the `key` field of other versions.
     """
-    if v.local == None:
-        return v.key
-    return _cmpkey(v.epoch, v.release, v.pre, v.post, v.dev, None)
-
-def version_key(epoch, release, pre, post, dev, local):
-    """Returns the comparison key for a version built from the given parts."""
-    return _cmpkey(epoch, release, pre, post, dev, local)
+    return v.key if v.local == None else v.key[:3]
 
 def make_version(epoch, release, pre, post, dev, local, version_str = ""):
     """Creates a Version struct and calculates its key."""
@@ -180,6 +178,8 @@ _ASCII_WHITESPACE = (" ", "\t", "\n", "\r", "\013", "\014", "\034", "\035", "\03
 # byte strings.
 _ASCII_WHITESPACE_CHARS = "".join(_ASCII_WHITESPACE)
 
+_UNICODE_WS_LEAD_BYTES = ("\302", "\341", "\342", "\343")
+
 def strip_whitespace(s):
     """Removes leading and trailing whitespace like Python's `str.strip()`.
 
@@ -192,6 +192,12 @@ def strip_whitespace(s):
     Returns:
         The stripped string.
     """
+    if not s:
+        return s
+    first = s[0]
+    last = s[-1]
+    if first > " " and first < "\200" and last > " " and last < "\200":
+        return s
     s = s.strip(_ASCII_WHITESPACE_CHARS)
 
     # Fast path: both ends are ASCII, so there is nothing more to strip.
@@ -225,6 +231,13 @@ def contains_whitespace(s):
     for ws in _ASCII_WHITESPACE:
         if ws in s:
             return True
+    has_lead = False
+    for b in _UNICODE_WS_LEAD_BYTES:
+        if b in s:
+            has_lead = True
+            break
+    if not has_lead:
+        return False
     for ws in _UNICODE_WHITESPACE:
         if ws in s:
             return True
@@ -333,7 +346,20 @@ def parse_stripped_version(version_str):
         if "" in parts:
             return None
         release = tuple([int(p) for p in parts])
-        return make_version(0, release, None, None, None, None, version_str)
+        trimmed = _trim_release(release)
+        return struct(
+            version_str = version_str,
+            epoch = 0,
+            release = release,
+            pre = None,
+            post = None,
+            dev = None,
+            local = None,
+            key = (0, trimmed, _STABLE_SUFFIX),
+            is_prerelease = False,
+            is_postrelease = False,
+            is_devrelease = False,
+        )
 
     return _parse_version_full(version_str)
 
@@ -342,13 +368,23 @@ def _split_digits(s):
     rest = s.lstrip(_DIGITS)
     return s[:len(s) - len(rest)], rest
 
-def _take_label(s, labels):
+def _take_label(s, labels, first_chars):
     """Matches `[._-]?label` at the start of `s`.
 
     Returns:
         (label, rest), or (None, s) if no label matches.
     """
-    t = s[1:] if s.startswith(_SEPARATORS) else s
+    if not s:
+        return None, s
+    c = s[0]
+    if c in _SEPARATORS:
+        if len(s) < 2 or s[1] not in first_chars:
+            return None, s
+        t = s[1:]
+    elif c in first_chars:
+        t = s
+    else:
+        return None, s
     for label in labels:
         if t.startswith(label):
             return label, t[len(label):]
@@ -360,7 +396,7 @@ def _take_number(s):
     Returns:
         (number or None, rest).
     """
-    t = s[1:] if s.startswith(_SEPARATORS) else s
+    t = s[1:] if s and s[0] in _SEPARATORS else s
     digits, rest = _split_digits(t)
     if digits:
         return int(digits), rest
@@ -372,8 +408,26 @@ def _scan_release(s):
     Returns:
         (epoch, release tuple, rest), or None if there is no match.
     """
-    if s.startswith("v"):
+    if not s:
+        return None
+    if s[0] == "v":
         s = s[1:]
+        if not s:
+            return None
+
+    # Fast path: grab the full [0-9.]+ run in one native lstrip when there is
+    # no epoch ("!").
+    if s[0] in _DIGITS:
+        rest = s.lstrip(_DIGITS_AND_DOT)
+        n = len(s) - len(rest)
+        if not rest.startswith("!"):
+            rel_str = s[:n]
+            if rel_str[-1] == ".":
+                # A trailing dot may start a suffix like ".post1", ".dev0", or ".*".
+                rel_str = rel_str[:-1]
+                rest = "." + rest
+            if rel_str and ".." not in rel_str and rel_str[-1] != ".":
+                return 0, tuple([int(p) for p in rel_str.split(".")]), rest
 
     digits, s = _split_digits(s)
     if not digits:
@@ -386,11 +440,13 @@ def _scan_release(s):
             digits, s = rest_digits, rest
 
     release = [int(digits)]
-    for _ in range(len(s)):
-        if not s.startswith(".") or not s[1:2] or s[1:2] not in _DIGITS:
-            break
-        digits, s = _split_digits(s[1:])
-        release.append(int(digits))
+    if s.startswith("."):
+        for _ in range(len(s)):
+            nxt = s[1:2]
+            if not s.startswith(".") or not nxt or nxt not in _DIGITS:
+                break
+            digits, s = _split_digits(s[1:])
+            release.append(int(digits))
     return epoch, tuple(release), s
 
 def _scan_local(s):
@@ -407,7 +463,8 @@ def _scan_local(s):
             break
         local.append(int(part) if not part.lstrip(_DIGITS) else part)
         s = rest
-        if not (s.startswith(_SEPARATORS) and s[1:2] and s[1:2] in _LOCAL_CHARS):
+        nxt = s[1:2]
+        if not (s and s[0] in _SEPARATORS and nxt and nxt in _LOCAL_CHARS):
             break
         s = s[1:]
     if not local:
@@ -423,30 +480,39 @@ def _scan_suffix(s, allow_local):
     Returns:
         (pre, post, dev, local, rest).
     """
+    if not s:
+        return None, None, None, None, s
+
     pre = None
-    label, s = _take_label(s, _PRE_LABELS)
+    label, s = _take_label(s, _PRE_LABELS, _PRE_FIRST)
     if label != None:
         number, s = _take_number(s)
         pre = (_PRE_NORMALIZATION.get(label, label), number or 0)
+        if not s:
+            return pre, None, None, None, s
 
     post = None
-    if s.startswith("-") and s[1:2] and s[1:2] in _DIGITS:
+    if s[0] == "-" and len(s) > 1 and s[1] in _DIGITS:
         digits, s = _split_digits(s[1:])
         post = ("post", int(digits))
     else:
-        label, s = _take_label(s, _POST_LABELS)
+        label, s = _take_label(s, _POST_LABELS, _POST_FIRST)
         if label != None:
             number, s = _take_number(s)
             post = ("post", number or 0)
+    if not s:
+        return pre, post, None, None, s
 
     dev = None
-    label, s = _take_label(s, _DEV_LABELS)
+    label, s = _take_label(s, _DEV_LABELS, "d")
     if label != None:
         number, s = _take_number(s)
         dev = ("dev", number or 0)
+        if not s:
+            return pre, post, dev, None, s
 
     local = None
-    if allow_local and s.startswith("+"):
+    if allow_local and s[0] == "+":
         local, rest = _scan_local(s[1:])
         if local != None:
             s = rest
@@ -462,6 +528,8 @@ def _parse_version_full(version_str):
     if s:
         return None
     return make_version(epoch, release, pre, post, dev, local, version_str)
+
+_VERSION_DELIMS = ",;) \t\n"
 
 def scan_version_prefix(s, allow_local = True, allow_wildcard = False, min_release_len = 1):
     """Matches a PEP 440 version at the start of `s`, like an unanchored regex.
@@ -482,6 +550,35 @@ def scan_version_prefix(s, allow_local = True, allow_wildcard = False, min_relea
         (for a `.*` match, the version without the suffix), or `(0, None)` if
         there is no match.
     """
+    if not s:
+        return 0, None
+
+    # Fast path for plain numeric releases like "2.31.0" followed by a delimiter.
+    if s[0] in _DIGITS:
+        rest = s.lstrip(_DIGITS_AND_DOT)
+        n = len(s) - len(rest)
+        if (not rest or rest[0] in _VERSION_DELIMS) and s[n - 1] != ".":
+            prefix = s[:n]
+            if ".." not in prefix:
+                parts = prefix.split(".")
+                if len(parts) < min_release_len:
+                    return 0, None
+                release = tuple([int(p) for p in parts])
+                trimmed = _trim_release(release)
+                return n, struct(
+                    version_str = prefix,
+                    epoch = 0,
+                    release = release,
+                    pre = None,
+                    post = None,
+                    dev = None,
+                    local = None,
+                    key = (0, trimmed, _STABLE_SUFFIX),
+                    is_prerelease = False,
+                    is_postrelease = False,
+                    is_devrelease = False,
+                )
+
     m = _scan_release(s.lower())
     if m == None:
         return 0, None
@@ -495,6 +592,36 @@ def scan_version_prefix(s, allow_local = True, allow_wildcard = False, min_relea
     n = len(s) - len(rest)
     return n, make_version(epoch, release, pre, post, dev, local, s[:n])
 
+def format_version(v, strip_trailing_zero = False):
+    """Formats a parsed version, optionally stripping trailing release zeros.
+
+    Internal helper shared with utils.bzl; not part of the public API.
+
+    Args:
+        v: A version struct returned by `parse`.
+        strip_trailing_zero: Whether to strip trailing zeros from the release
+            segment, keeping at least one segment.
+
+    Returns:
+        The formatted version string.
+    """
+    release = v.release
+    if strip_trailing_zero and len(release) > 1 and release[-1] == 0:
+        trimmed = _trim_release(release)
+        release = trimmed if trimmed else (0,)
+    s = ".".join([str(x) for x in release])
+    if v.epoch != 0:
+        s = "{}!{}".format(v.epoch, s)
+    if v.pre != None:
+        s += "{}{}".format(v.pre[0], v.pre[1])
+    if v.post != None:
+        s += ".post{}".format(v.post[1])
+    if v.dev != None:
+        s += ".dev{}".format(v.dev[1])
+    if v.local != None:
+        s += "+" + ".".join([str(x) for x in v.local])
+    return s
+
 def version_to_string(v):
     """Returns the normalized string form of a parsed version.
 
@@ -507,18 +634,7 @@ def version_to_string(v):
     Returns:
         The normalized version string.
     """
-    s = ".".join([str(x) for x in v.release])
-    if v.epoch != 0:
-        s = "{}!{}".format(v.epoch, s)
-    if v.pre != None:
-        s += "{}{}".format(v.pre[0], v.pre[1])
-    if v.post != None:
-        s += ".post{}".format(v.post[1])
-    if v.dev != None:
-        s += ".dev{}".format(v.dev[1])
-    if v.local != None:
-        s += "+" + ".".join([str(x) for x in v.local])
-    return s
+    return format_version(v)
 
 version = struct(
     parse = parse_version,

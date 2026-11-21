@@ -1,7 +1,5 @@
 """Tests for requirements.bzl."""
 
-load("@rules_testing//lib:analysis_test.bzl", "analysis_test", "test_suite")
-load("@rules_testing//lib:truth.bzl", "matching")
 load("@rules_testing//lib:util.bzl", "util")
 
 # buildifier: disable=bzl-visibility
@@ -12,6 +10,7 @@ load("//pypackaging/private/requirements:requirements.bzl", "requirements")
 
 # buildifier: disable=bzl-visibility
 load("//pypackaging/private/utils:utils.bzl", "utils")
+load(":test_helpers.bzl", "expect_failure_test", "unit_test_suite")
 
 def _invalid_requirement_subject_rule_impl(ctx):
     requirements.parse(ctx.attr.req_str)
@@ -211,18 +210,10 @@ def _test_parse_requirement_basic_impl(env, _target):
     env.expect.that_collection(req.specifier.specs).has_size(0)
     env.expect.that_bool(req.marker == None).equals(True)
 
-def _test_parse_requirement_basic(name):
-    util.helper_target(native.filegroup, name = name + "_subject")
-    analysis_test(name = name, target = name + "_subject", impl = _test_parse_requirement_basic_impl)
-
 def _test_parse_requirement_with_extras_impl(env, _target):
     req = requirements.parse("requests[security,tests]")
     env.expect.that_str(req.name).equals("requests")
     env.expect.that_collection(req.extras).contains_exactly(["security", "tests"]).in_order()
-
-def _test_parse_requirement_with_extras(name):
-    util.helper_target(native.filegroup, name = name + "_subject")
-    analysis_test(name = name, target = name + "_subject", impl = _test_parse_requirement_with_extras_impl)
 
 def _test_parse_requirement_equality_impl(env, _target):
     for dep1, dep2 in _EQUAL_DEPENDENCIES + _EQUIVALENT_DEPENDENCIES:
@@ -240,10 +231,6 @@ def _test_parse_requirement_equality_impl(env, _target):
             requirements.to_string(requirements.parse(dep2)),
         )
 
-def _test_parse_requirement_equality(name):
-    util.helper_target(native.filegroup, name = name + "_subject")
-    analysis_test(name = name, target = name + "_subject", impl = _test_parse_requirement_equality_impl)
-
 def _test_parse_requirement_difference_impl(env, _target):
     for dep1, dep2 in _DIFFERENT_DEPENDENCIES:
         req1 = requirements.parse(dep1)
@@ -257,10 +244,6 @@ def _test_parse_requirement_difference_impl(env, _target):
             req1.marker == req2.marker
         )
         env.expect.that_bool(is_equal).equals(False)
-
-def _test_parse_requirement_difference(name):
-    util.helper_target(native.filegroup, name = name + "_subject")
-    analysis_test(name = name, target = name + "_subject", impl = _test_parse_requirement_difference_impl)
 
 def _test_parse_requirement_matrix_impl(env, _target):
     for name in _NAMES:
@@ -290,10 +273,6 @@ def _test_parse_requirement_matrix_impl(env, _target):
                         env.expect.that_str(req.name).equals(expected_name)
                         env.expect.that_str(req.raw_name).equals(name)
 
-def _test_parse_requirement_matrix(name):
-    util.helper_target(native.filegroup, name = name + "_subject")
-    analysis_test(name = name, target = name + "_subject", impl = _test_parse_requirement_matrix_impl)
-
 def _test_parse_requirement_marker_with_at_impl(env, _target):
     req = requirements.parse('requests >= 2.0; extra == "my@extra"')
     env.expect.that_str(req.name).equals("requests")
@@ -302,10 +281,6 @@ def _test_parse_requirement_marker_with_at_impl(env, _target):
     req2 = requirements.parse("pkg @ https://example.com/a;b.zip")
     env.expect.that_str(req2.name).equals("pkg")
     env.expect.that_str(req2.url).equals("https://example.com/a;b.zip")
-
-def _test_parse_requirement_marker_with_at(name):
-    util.helper_target(native.filegroup, name = name + "_subject")
-    analysis_test(name = name, target = name + "_subject", impl = _test_parse_requirement_marker_with_at_impl)
 
 def _test_parse_requirement_grammar_impl(env, _target):
     # Empty parenthesized specifier.
@@ -357,10 +332,6 @@ def _test_parse_requirement_grammar_impl(env, _target):
     env.expect.that_str(req.specifier.specs[0].operator).equals("===")
     env.expect.that_str(req.specifier.specs[0].version).equals("")
 
-def _test_parse_requirement_grammar(name):
-    util.helper_target(native.filegroup, name = name + "_subject")
-    analysis_test(name = name, target = name + "_subject", impl = _test_parse_requirement_grammar_impl)
-
 def _test_parse_requirement_specifier_tokens_impl(env, _target):
     # Expected values are from packaging 26.2.
     cases = [
@@ -384,10 +355,6 @@ def _test_parse_requirement_specifier_tokens_impl(env, _target):
         specs = requirements.parse(s).specifier.specs
         env.expect.where(req = s).that_collection([(spec.operator, spec.version) for spec in specs]).contains_exactly(expected).in_order()
 
-def _test_parse_requirement_specifier_tokens(name):
-    util.helper_target(native.filegroup, name = name + "_subject")
-    analysis_test(name = name, target = name + "_subject", impl = _test_parse_requirement_specifier_tokens_impl)
-
 def _test_parse_requirement_raw_names_impl(env, _target):
     req = requirements.parse("Foo_Bar [B, a,b] >= 1")
     env.expect.that_str(req.raw_name).equals("Foo_Bar")
@@ -408,10 +375,6 @@ def _test_parse_requirement_raw_names_impl(env, _target):
     renamed = struct(**fields)
     env.expect.that_str(requirements.to_string(renamed)).equals("Bar[x]>=1")
 
-def _test_parse_requirement_raw_names(name):
-    util.helper_target(native.filegroup, name = name + "_subject")
-    analysis_test(name = name, target = name + "_subject", impl = _test_parse_requirement_raw_names_impl)
-
 def _test_parse_requirement_marker_str_impl(env, _target):
     env.expect.that_bool(requirements.parse("foo>=1").marker_str == None).equals(True)
     env.expect.that_bool(requirements.parse("foo @ https://x").marker_str == None).equals(True)
@@ -423,10 +386,6 @@ def _test_parse_requirement_marker_str_impl(env, _target):
     ]
     for s, expected in cases:
         env.expect.where(req = s).that_str(requirements.parse(s).marker_str).equals(expected)
-
-def _test_parse_requirement_marker_str(name):
-    util.helper_target(native.filegroup, name = name + "_subject")
-    analysis_test(name = name, target = name + "_subject", impl = _test_parse_requirement_marker_str_impl)
 
 def _test_requirement_to_string_impl(env, _target):
     # Expected values are `str(packaging.requirements.Requirement(...))` (26.2).
@@ -449,49 +408,35 @@ def _test_requirement_to_string_impl(env, _target):
     for s, expected in cases:
         env.expect.where(req = s).that_str(requirements.to_string(requirements.parse(s))).equals(expected)
 
-def _test_requirement_to_string(name):
-    util.helper_target(native.filegroup, name = name + "_subject")
-    analysis_test(name = name, target = name + "_subject", impl = _test_requirement_to_string_impl)
-
-def _make_error_message_test_impl(message):
-    def _impl(env, target):
-        env.expect.that_target(target).failures().contains_predicate(matching.contains(message))
-
-    return _impl
-
 def requirements_test_suite(name):
     """Sets up the requirement parsing tests.
 
     Args:
         name: the name of the test suite
     """
-    test_suite(
-        name = name + "_standard",
-        tests = [
-            _test_parse_requirement_basic,
-            _test_parse_requirement_with_extras,
-            _test_parse_requirement_equality,
-            _test_parse_requirement_difference,
-            _test_parse_requirement_matrix,
-            _test_parse_requirement_marker_with_at,
-            _test_parse_requirement_grammar,
-            _test_parse_requirement_specifier_tokens,
-            _test_parse_requirement_marker_str,
-            _test_parse_requirement_raw_names,
-            _test_requirement_to_string,
-        ],
-    )
-
     invalid_test_names = []
 
     # buildifier: disable=enumerate
     for i, (req, message) in enumerate(_INVALID_REQUIREMENTS):
         test_name = name + "_invalid_{}".format(i)
         util.helper_target(_invalid_requirement_subject_rule, name = test_name + "_subject", req_str = req)
-        analysis_test(name = test_name, target = test_name + "_subject", expect_failure = True, impl = _make_error_message_test_impl(message))
+        expect_failure_test(test_name, test_name + "_subject", message)
         invalid_test_names.append(test_name)
 
-    native.test_suite(
+    unit_test_suite(
         name = name,
-        tests = [":" + name + "_standard"] + [":" + n for n in invalid_test_names],
+        tests = {
+            "test_parse_requirement_basic": _test_parse_requirement_basic_impl,
+            "test_parse_requirement_with_extras": _test_parse_requirement_with_extras_impl,
+            "test_parse_requirement_equality": _test_parse_requirement_equality_impl,
+            "test_parse_requirement_difference": _test_parse_requirement_difference_impl,
+            "test_parse_requirement_matrix": _test_parse_requirement_matrix_impl,
+            "test_parse_requirement_marker_with_at": _test_parse_requirement_marker_with_at_impl,
+            "test_parse_requirement_grammar": _test_parse_requirement_grammar_impl,
+            "test_parse_requirement_specifier_tokens": _test_parse_requirement_specifier_tokens_impl,
+            "test_parse_requirement_marker_str": _test_parse_requirement_marker_str_impl,
+            "test_parse_requirement_raw_names": _test_parse_requirement_raw_names_impl,
+            "test_requirement_to_string": _test_requirement_to_string_impl,
+        },
+        extra_tests = invalid_test_names,
     )

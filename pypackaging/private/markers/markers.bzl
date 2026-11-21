@@ -7,7 +7,7 @@ Baseline: pypa/packaging 26.2
 
 load("//pypackaging/private/specifiers:specifiers.bzl", "specifier_contains", "try_parse_specifier")
 load("//pypackaging/private/utils:utils.bzl", "utils")
-load("//pypackaging/private/version:version.bzl", "strip_whitespace")
+load("//pypackaging/private/version:version.bzl", "strip_whitespace", "try_parse_version")
 
 visibility(["//", "//pypackaging/..."])
 
@@ -22,33 +22,63 @@ _WS = " \t"
 # letters and digits that can legitimately appear next to a token.
 _ASCII_WORD_CHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_"
 
-# Upstream VARIABLE token, longest first so that a prefix never shadows a
-# longer name.
-_VARIABLES = (
-    "platform.python_implementation",
-    "platform_python_implementation",
-    "implementation_version",
-    "python_implementation",
-    "python_full_version",
-    "implementation_name",
-    "dependency_groups",
-    "platform_release",
-    "platform.machine",
-    "platform.version",
-    "platform_machine",
-    "platform_version",
-    "platform_system",
-    "python_version",
-    "sys.platform",
-    "sys_platform",
-    "os.name",
-    "os_name",
-    "extras",
-    "extra",
-)
+# Pre-allocated variable nodes, keyed by first character (longest first within
+# each bucket so prefixes never shadow longer names).
+_VAR_NODES = {
+    name: struct(type = "variable", value = name)
+    for name in (
+        "dependency_groups",
+        "extra",
+        "extras",
+        "implementation_name",
+        "implementation_version",
+        "os_name",
+        "platform_machine",
+        "platform_python_implementation",
+        "platform_release",
+        "platform_system",
+        "platform_version",
+        "python_full_version",
+        "python_version",
+        "sys_platform",
+    )
+}
 
-# Longest first.
-_OPS = ("===", "==", "~=", "!=", "<=", ">=", "<", ">")
+_VARS_BY_CHAR = {
+    "d": (("dependency_groups", _VAR_NODES["dependency_groups"]),),
+    "e": (
+        ("extras", _VAR_NODES["extras"]),
+        ("extra", _VAR_NODES["extra"]),
+    ),
+    "i": (
+        ("implementation_version", _VAR_NODES["implementation_version"]),
+        ("implementation_name", _VAR_NODES["implementation_name"]),
+    ),
+    "o": (
+        ("os_name", _VAR_NODES["os_name"]),
+        ("os.name", _VAR_NODES["os_name"]),
+    ),
+    "p": (
+        ("platform_python_implementation", _VAR_NODES["platform_python_implementation"]),
+        ("platform.python_implementation", _VAR_NODES["platform_python_implementation"]),
+        ("python_implementation", _VAR_NODES["platform_python_implementation"]),
+        ("python_full_version", _VAR_NODES["python_full_version"]),
+        ("platform_release", _VAR_NODES["platform_release"]),
+        ("platform_machine", _VAR_NODES["platform_machine"]),
+        ("platform.machine", _VAR_NODES["platform_machine"]),
+        ("platform_version", _VAR_NODES["platform_version"]),
+        ("platform.version", _VAR_NODES["platform_version"]),
+        ("platform_system", _VAR_NODES["platform_system"]),
+        ("python_version", _VAR_NODES["python_version"]),
+    ),
+    "s": (
+        ("sys_platform", _VAR_NODES["sys_platform"]),
+        ("sys.platform", _VAR_NODES["sys_platform"]),
+    ),
+}
+
+_TWO_CHAR_OPS = {"==": "==", "~=": "~=", "!=": "!=", "<=": "<=", ">=": ">="}
+_ONE_CHAR_OPS = {"<": "<", ">": ">"}
 
 def is_word_char(c):
     """Returns True if `c` counts as a regex word character (`\\w`).
@@ -64,21 +94,21 @@ def is_word_char(c):
     """
     return c in _ASCII_WORD_CHARS or c >= "\200"
 
-def _is_boundary(src, pos):
+def _is_boundary(src, n, pos):
     """Returns True if `pos` is a regex `\\b` word boundary in `src`."""
     before = pos > 0 and is_word_char(src[pos - 1])
-    after = pos < len(src) and is_word_char(src[pos])
+    after = pos < n and is_word_char(src[pos])
     return before != after
 
-def _match_word(src, pos, word):
+def _match_word(src, n, pos, word):
     """Matches `\\bword\\b` at `pos`."""
     return (
         src.startswith(word, pos) and
-        _is_boundary(src, pos) and
-        _is_boundary(src, pos + len(word))
+        _is_boundary(src, n, pos) and
+        _is_boundary(src, n, pos + len(word))
     )
 
-def skip_ws(src, pos):
+def skip_ws(src, pos, n = None):
     """Returns the position after any spaces or tabs starting at `pos`.
 
     Internal helper shared with requirements.bzl; not part of the public API.
@@ -86,18 +116,33 @@ def skip_ws(src, pos):
     Args:
         src: The source string.
         pos: The start position.
+        n: Optional precomputed `len(src)`.
 
     Returns:
         The position of the first non-whitespace character at or after `pos`.
     """
-    for _ in range(len(src) - pos):
-        if src[pos] in _WS:
+    if n == None:
+        n = len(src)
+    if pos >= n:
+        return pos
+    c = src[pos]
+    if c != " " and c != "\t":
+        return pos
+    pos += 1
+    if pos >= n:
+        return pos
+    c = src[pos]
+    if c != " " and c != "\t":
+        return pos
+    for _ in range(n - pos):
+        c = src[pos]
+        if c == " " or c == "\t":
             pos += 1
         else:
             break
     return pos
 
-def at_end(src, pos):
+def at_end(src, pos, n = None):
     """Returns True if the upstream END token (regex `$`) matches at `pos`.
 
     Like Python's `$` without MULTILINE, this matches at the end of the string
@@ -108,11 +153,13 @@ def at_end(src, pos):
     Args:
         src: The source string.
         pos: The position to check.
+        n: Optional precomputed `len(src)`.
 
     Returns:
         True if at the end of the input.
     """
-    n = len(src)
+    if n == None:
+        n = len(src)
     return pos == n or (pos == n - 1 and src[pos] == "\n")
 
 def syntax_error(ctx, message, span_start, span_end = None):
@@ -262,58 +309,64 @@ def _decode_python_str(ctx, start, end):
 # Marker parser
 # ---------------------------------------------------------------------------
 
-def _variable(name):
-    return struct(type = "variable", value = name)
-
 def _string(value):
     return struct(type = "string", value = value)
 
-def _parse_marker_var(ctx, pos):
+def _parse_marker_var(ctx, src, n, pos):
     """marker_var = VARIABLE | QUOTED_STRING"""
-    src = ctx.src
-    if _is_boundary(src, pos):
-        for v in _VARIABLES:
-            if src.startswith(v, pos) and _is_boundary(src, pos + len(v)):
-                name = v.replace(".", "_")
-                if name == "python_implementation":
-                    name = "platform_python_implementation"
-                return _variable(name), pos + len(v)
-    if pos < len(src) and src[pos] in "'\"":
-        end = src.find(src[pos], pos + 1)
-        if end != -1:
-            return _string(_decode_python_str(ctx, pos, end)), end + 1
+    if pos < n:
+        c = src[pos]
+        if c == "'" or c == "\"":
+            end = src.find(c, pos + 1)
+            if end != -1:
+                return _string(_decode_python_str(ctx, pos, end)), end + 1
+        else:
+            candidates = _VARS_BY_CHAR.get(c)
+            if candidates != None and (pos == 0 or not is_word_char(src[pos - 1])):
+                for raw, node in candidates:
+                    if src.startswith(raw, pos):
+                        end = pos + len(raw)
+                        if end == n or not is_word_char(src[end]):
+                            return node, end
     syntax_error(ctx, "Expected a marker variable or quoted string", pos)
     return None, pos  # Unreachable
 
-def _parse_marker_op(ctx, pos):
+def _parse_marker_op(ctx, src, n, pos):
     """marker_op = IN | NOT IN | OP"""
-    src = ctx.src
-    if _match_word(src, pos, "in"):
-        return "in", pos + 2
-    if _match_word(src, pos, "not"):
-        pos += 3
-        if pos >= len(src) or src[pos] not in _WS:
-            syntax_error(ctx, "Expected whitespace after 'not'", pos)
-        pos = skip_ws(src, pos)
-        if not _match_word(src, pos, "in"):
-            syntax_error(ctx, "Expected 'in' after 'not'", pos)
-        return "not in", pos + 2
-    for op in _OPS:
-        if src.startswith(op, pos):
-            return op, pos + len(op)
+    if pos < n:
+        c = src[pos]
+        if c == "=" or c == "!" or c == "<" or c == ">" or c == "~":
+            if c == "=" and src.startswith("===", pos):
+                return "===", pos + 3
+            op = _TWO_CHAR_OPS.get(src[pos:pos + 2])
+            if op != None:
+                return op, pos + 2
+            op = _ONE_CHAR_OPS.get(c)
+            if op != None:
+                return op, pos + 1
+        elif c == "i":
+            if _match_word(src, n, pos, "in"):
+                return "in", pos + 2
+        elif c == "n":
+            if _match_word(src, n, pos, "not"):
+                pos += 3
+                if pos >= n or src[pos] not in _WS:
+                    syntax_error(ctx, "Expected whitespace after 'not'", pos)
+                pos = skip_ws(src, pos, n)
+                if not _match_word(src, n, pos, "in"):
+                    syntax_error(ctx, "Expected 'in' after 'not'", pos)
+                return "not in", pos + 2
     syntax_error(ctx, "Expected marker operator, one of <=, <, !=, ==, >=, >, ~=, ===, in, not in", pos)
     return None, pos  # Unreachable
 
-def _parse_marker_item(ctx, pos):
+def _parse_marker_item(ctx, src, n, pos):
     """marker_item = WS? marker_var WS? marker_op WS? marker_var WS?"""
-    src = ctx.src
-    pos = skip_ws(src, pos)
-    lhs, pos = _parse_marker_var(ctx, pos)
-    pos = skip_ws(src, pos)
-    op, pos = _parse_marker_op(ctx, pos)
-    pos = skip_ws(src, pos)
-    rhs, pos = _parse_marker_var(ctx, pos)
-    pos = skip_ws(src, pos)
+    lhs, pos = _parse_marker_var(ctx, src, n, pos)
+    pos = skip_ws(src, pos, n)
+    op, pos = _parse_marker_op(ctx, src, n, pos)
+    pos = skip_ws(src, pos, n)
+    rhs, pos = _parse_marker_var(ctx, src, n, pos)
+    pos = skip_ws(src, pos, n)
 
     # PEP 685: normalize the value compared against `extra` (upstream
     # `_normalize_extras`). Upstream only does this for top-level items, so
@@ -347,39 +400,45 @@ def parse_marker_expression(ctx, pos):
     # Every iteration consumes at least one character ("(" or a marker item).
     for _ in range(n + 1):
         # marker_atom: WS? "(" WS? marker WS? ")" WS? | WS? marker_item WS?
-        pos = skip_ws(src, pos)
+        pos = skip_ws(src, pos, n)
         if pos < n and src[pos] == "(":
             stack.append((pos, current))
             current = []
             pos += 1
             continue
 
-        item, pos = _parse_marker_item(ctx, pos)
+        item, pos = _parse_marker_item(ctx, src, n, pos)
         current.append(item)
 
         # After an atom: look for a BOOLOP, else close a parenthesis.
         expect_atom = False
         for _ in range(len(stack) + 1):
-            if _match_word(src, pos, "and") or _match_word(src, pos, "or"):
-                op = "and" if src.startswith("and", pos) else "or"
-                current.append(op)
-                pos += len(op)
-                expect_atom = True
-                break
+            if pos < n:
+                c = src[pos]
+                if c == "a" and _match_word(src, n, pos, "and"):
+                    current.append("and")
+                    pos += 3
+                    expect_atom = True
+                    break
+                if c == "o" and _match_word(src, n, pos, "or"):
+                    current.append("or")
+                    pos += 2
+                    expect_atom = True
+                    break
+                if c == ")" and stack:
+                    _open_pos, parent = stack.pop()
+                    parent.append(current)
+                    current = parent
+                    pos = skip_ws(src, pos + 1, n)
+                    continue
             if not stack:
                 return current, pos
-            if pos < n and src[pos] == ")":
-                _open_pos, parent = stack.pop()
-                parent.append(current)
-                current = parent
-                pos = skip_ws(src, pos + 1)
-            else:
-                syntax_error(
-                    ctx,
-                    "Expected matching RIGHT_PARENTHESIS for LEFT_PARENTHESIS, after marker expression",
-                    stack[-1][0],
-                    pos,
-                )
+            syntax_error(
+                ctx,
+                "Expected matching RIGHT_PARENTHESIS for LEFT_PARENTHESIS, after marker expression",
+                stack[-1][0],
+                pos,
+            )
         if not expect_atom:
             fail("internal error: marker parser did not terminate")
 
@@ -432,6 +491,14 @@ def _format_item(item):
     lhs, op, rhs = item
     return "{} {} {}".format(_format_node(lhs), op, _format_node(rhs))
 
+def _unwrap_singleton(node):
+    for _ in range(1 << 30):
+        if type(node) == "list" and len(node) == 1 and type(node[0]) in ("list", "tuple"):
+            node = node[0]
+        else:
+            break
+    return node
+
 def marker_to_string(markers):
     """Serializes a parsed marker tree like upstream `str(Marker)`.
 
@@ -445,41 +512,44 @@ def marker_to_string(markers):
     Returns:
         The normalized marker string ("" for an empty tree).
     """
-    out = []
+    node = _unwrap_singleton(markers)
+    if type(node) == "tuple":
+        return _format_item(node)
+    if type(node) != "list":
+        return node
+    if not node:
+        return ""
 
-    # Work items: ("node", node, first) or ("text", text), processed LIFO.
-    work = [("node", markers, True)]
+    out = []
+    work = []
+    for i in range(len(node) - 1, -1, -1):
+        work.append(node[i])
+        if i:
+            work.append(" ")
+
     for _ in range(1 << 30):
         if not work:
             break
         entry = work.pop()
-        if entry[0] == "text":
-            out.append(entry[1])
+        if type(entry) == "string":
+            out.append(entry)
             continue
-        node = entry[1]
-        first = entry[2]
+        if type(entry) == "tuple":
+            out.append(_format_item(entry))
+            continue
 
-        # A single-element list wrapping a list or item is formatted as its
-        # element (upstream `_format_marker`).
-        for _ in range(1 << 30):
-            if type(node) == "list" and len(node) == 1 and type(node[0]) in ("list", "tuple"):
-                node = node[0]
-            else:
-                break
-
-        if type(node) == "tuple":
-            out.append(_format_item(node))
-        elif type(node) == "list":
-            if not first:
-                work.append(("text", ")"))
-            for i in range(len(node) - 1, -1, -1):
-                work.append(("node", node[i], False))
+        entry = _unwrap_singleton(entry)
+        if type(entry) == "tuple":
+            out.append(_format_item(entry))
+        elif type(entry) == "list":
+            work.append(")")
+            for i in range(len(entry) - 1, -1, -1):
+                work.append(entry[i])
                 if i:
-                    work.append(("text", " "))
-            if not first:
-                work.append(("text", "("))
+                    work.append(" ")
+            work.append("(")
         else:
-            out.append(node)
+            out.append(entry)
     return "".join(out)
 
 # ---------------------------------------------------------------------------
@@ -500,10 +570,34 @@ _MARKERS_ALLOWING_SET = {
 
 _COLLECTION_TYPES = ("list", "tuple", "set", "dict")
 
-def _env_lookup(environment, key, item):
+def _resolve_extra(environment, cache):
+    if "extra" in cache:
+        return cache["extra"]
+    extra = environment.get("extra")
+    if extra == None or extra == "":
+        val = ""
+    elif type(extra) == "string":
+        val = utils.canonicalize_name(extra)
+    elif type(extra) in ("list", "tuple"):
+        out = {}
+        for e in extra:
+            if type(e) != "string":
+                fail("Marker environment value for 'extra' must be a string or a list/tuple of strings, got an element of type {}".format(type(e)))
+            out[utils.canonicalize_name(e)] = True
+        val = out
+    else:
+        fail("Marker environment value for 'extra' must be a string or a list/tuple of strings, got {}".format(type(extra)))
+    cache["extra"] = val
+    return val
+
+def _env_lookup(environment, key, item, cache):
+    if key == "extra":
+        return _resolve_extra(environment, cache)
     value = environment.get(key)
     if value == None:
         fail("Undefined environment variable '{}' in marker `{}`".format(key, _format_item(item)))
+    if key == "python_full_version" and type(value) == "string" and value.endswith("+"):
+        return value + "local"
     return value
 
 def _canonicalize_collection(value, key, item):
@@ -518,23 +612,23 @@ def _canonicalize_collection(value, key, item):
         out.append(utils.canonicalize_name(v))
     return out
 
-def _eval_item(item, environment):
+def _eval_item(item, environment, cache, ver_cache):
     lhs, op, rhs = item
 
     if lhs.type == "variable":
         key = lhs.value
-        lhs_val = _env_lookup(environment, key, item)
+        lhs_val = _env_lookup(environment, key, item, cache)
         rhs_val = rhs.value
         env_val = lhs_val
     else:
         key = rhs.value
         lhs_val = lhs.value
-        rhs_val = _env_lookup(environment, key, item)
+        rhs_val = _env_lookup(environment, key, item, cache)
         env_val = rhs_val
 
     # Non-standard, uv-compatible extension: `extra` may be a list/tuple of
-    # active extras (already normalized by `_prepare_environment`).
-    if key == "extra" and type(env_val) in ("list", "tuple"):
+    # active extras (converted to a dict set by `_resolve_extra`).
+    if key == "extra" and type(env_val) == "dict":
         value = rhs_val if lhs.type == "variable" else lhs_val
         if op == "==":
             return value in env_val
@@ -572,7 +666,16 @@ def _eval_item(item, environment):
         if spec != None:
             # Like upstream `spec.contains(lhs, prereleases=True)`: an invalid
             # version is False (only `===` compares it as a string).
-            return specifier_contains(spec, lhs_val)
+            if spec.operator == "===":
+                return specifier_contains(spec, lhs_val)
+            if lhs_val in ver_cache:
+                pv = ver_cache[lhs_val]
+            else:
+                pv = try_parse_version(lhs_val)
+                ver_cache[lhs_val] = pv
+            if pv == None:
+                return False
+            return specifier_contains(spec, pv)
 
     if op == "in":
         return lhs_val in rhs_val
@@ -590,30 +693,6 @@ def _eval_item(item, environment):
         repr(rhs_val),
         _format_item(item),
     ))
-
-def _prepare_environment(environment):
-    env = dict(environment)
-
-    extra = env.get("extra")
-    if extra == None or extra == "":
-        env["extra"] = ""
-    elif type(extra) == "string":
-        env["extra"] = utils.canonicalize_name(extra)
-    elif type(extra) in ("list", "tuple"):
-        out = []
-        for e in extra:
-            if type(e) != "string":
-                fail("Marker environment value for 'extra' must be a string or a list/tuple of strings, got an element of type {}".format(type(e)))
-            out.append(utils.canonicalize_name(e))
-        env["extra"] = out
-    else:
-        fail("Marker environment value for 'extra' must be a string or a list/tuple of strings, got {}".format(type(extra)))
-
-    # Upstream `_repair_python_full_version`.
-    python_full_version = env.get("python_full_version")
-    if type(python_full_version) == "string" and python_full_version.endswith("+"):
-        env["python_full_version"] = python_full_version + "local"
-    return env
 
 def evaluate_markers(markers, environment):
     """Evaluates a parsed marker expression against an environment.
@@ -657,37 +736,68 @@ def evaluate_markers(markers, environment):
     if not markers:
         return True
 
-    environment = _prepare_environment(environment)
+    cache = {}
+    ver_cache = {}
 
-    # Stack holds tuples: (markers_list, index, groups)
-    stack = [(markers, 0, [[]])]
+    # Fast path for flat markers (no parenthesized sub-expressions).
+    # Evaluates eagerly like upstream packaging (any invalid comparison or
+    # undefined variable fails even in an otherwise-decided branch).
+    or_val = False
+    group_val = True
+    nested_idx = -1
+    for i in range(len(markers)):
+        marker = markers[i]
+        if type(marker) == "tuple":
+            if not _eval_item(marker, environment, cache, ver_cache):
+                group_val = False
+        elif marker == "or":
+            if group_val:
+                or_val = True
+            group_val = True
+        elif marker == "and":
+            pass
+        elif type(marker) == "list":
+            nested_idx = i
+            break
+        else:
+            fail("Unexpected marker: {}".format(marker))
+
+    if nested_idx == -1:
+        return or_val or group_val
+
+    # Fall back to explicit stack starting from the first nested list.
+    # Mutable stack frames: [markers_list, index, length, or_val, group_val].
+    stack = [
+        [markers, nested_idx + 1, len(markers), or_val, group_val],
+        [markers[nested_idx], 0, len(markers[nested_idx]), False, True],
+    ]
 
     # Each step advances an index or pops a level, so this always terminates.
     for _ in range(1 << 30):
-        current_markers, i, groups = stack[-1]
+        frame = stack[-1]
+        i = frame[1]
 
-        if i >= len(current_markers):
-            # Level finished: any(all(g) for g in groups)
-            result = False
-            for g in groups:
-                if all(g):
-                    result = True
-                    break
+        if i >= frame[2]:
+            result = frame[3] or frame[4]
             stack.pop()
             if not stack:
                 return result
-            stack[-1][2][-1].append(result)
+            if not result:
+                stack[-1][4] = False
             continue
 
-        marker = current_markers[i]
-        stack[-1] = (current_markers, i + 1, groups)
+        marker = frame[0][i]
+        frame[1] = i + 1
 
-        if type(marker) == "list":
-            stack.append((marker, 0, [[]]))
-        elif type(marker) == "tuple":
-            groups[-1].append(_eval_item(marker, environment))
+        if type(marker) == "tuple":
+            if not _eval_item(marker, environment, cache, ver_cache):
+                frame[4] = False
+        elif type(marker) == "list":
+            stack.append([marker, 0, len(marker), False, True])
         elif marker == "or":
-            groups.append([])
+            if frame[4]:
+                frame[3] = True
+            frame[4] = True
         elif marker == "and":
             pass
         else:

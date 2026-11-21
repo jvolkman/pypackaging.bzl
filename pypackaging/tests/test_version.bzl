@@ -1,21 +1,16 @@
 """Tests for version.bzl."""
 
-load("@rules_testing//lib:analysis_test.bzl", "analysis_test", "test_suite")
-load("@rules_testing//lib:truth.bzl", "matching")
 load("@rules_testing//lib:util.bzl", "util")
 
 # buildifier: disable=bzl-visibility
 load("//pypackaging/private/version:version.bzl", "version")
+load(":test_helpers.bzl", "expect_failure_test", "unit_test_suite")
 
 def _test_parse_version_basic_impl(env, _target):
     v = version.parse("1.2.3")
     env.expect.that_str(v.version_str).equals("1.2.3")
     env.expect.that_int(v.epoch).equals(0)
     env.expect.that_collection(v.release).contains_exactly([1, 2, 3]).in_order()
-
-def _test_parse_version_basic(name):
-    util.helper_target(native.filegroup, name = name + "_subject")
-    analysis_test(name = name, target = name + "_subject", impl = _test_parse_version_basic_impl)
 
 def _test_parse_version_parts_impl(env, _target):
     v = version.parse("1.2.3a1.post2.dev3+local")
@@ -26,10 +21,6 @@ def _test_parse_version_parts_impl(env, _target):
     env.expect.that_collection(v.post).contains_exactly(["post", 2]).in_order()
     env.expect.that_collection(v.dev).contains_exactly(["dev", 3]).in_order()
     env.expect.that_collection(v.local).contains_exactly(["local"])
-
-def _test_parse_version_parts(name):
-    util.helper_target(native.filegroup, name = name + "_subject")
-    analysis_test(name = name, target = name + "_subject", impl = _test_parse_version_parts_impl)
 
 def _test_version_cmp_impl(env, _target):
     v1 = version.parse("1.0")
@@ -179,14 +170,6 @@ def _test_version_cmp_upstream_impl(env, _target):
         # v1 == v1
         env.expect.that_bool(v1.key == v1.key).equals(True)
 
-def _test_version_cmp_upstream(name):
-    util.helper_target(native.filegroup, name = name + "_subject")
-    analysis_test(name = name, target = name + "_subject", impl = _test_version_cmp_upstream_impl)
-
-def _test_version_cmp(name):
-    util.helper_target(native.filegroup, name = name + "_subject")
-    analysis_test(name = name, target = name + "_subject", impl = _test_version_cmp_impl)
-
 def _test_parse_version_whitespace_impl(env, _target):
     # packaging.version.Version ignores surrounding whitespace (Python's \s),
     # including Unicode whitespace.
@@ -205,10 +188,6 @@ def _test_parse_version_whitespace_impl(env, _target):
         env.expect.where(version = s).that_str(v.version_str).equals(version_str)
 
     env.expect.that_str(version.parse("  1.2.3\n").version_str).equals("1.2.3")
-
-def _test_parse_version_whitespace(name):
-    util.helper_target(native.filegroup, name = name + "_subject")
-    analysis_test(name = name, target = name + "_subject", impl = _test_parse_version_whitespace_impl)
 
 def _test_version_to_string_impl(env, _target):
     # Expected values are str(packaging.version.Version(input)).
@@ -252,10 +231,6 @@ def _test_version_to_string_impl(env, _target):
     ]:
         env.expect.that_str(version.to_string(version.parse(s))).equals(expected)
 
-def _test_version_to_string(name):
-    util.helper_target(native.filegroup, name = name + "_subject")
-    analysis_test(name = name, target = name + "_subject", impl = _test_version_to_string_impl)
-
 def _test_try_parse_impl(env, _target):
     for s in ["foo", "", " ", "1.0 a1", "1.0+", "1!2!3"]:
         env.expect.that_bool(version.try_parse(s) == None).equals(True)
@@ -263,10 +238,6 @@ def _test_try_parse_impl(env, _target):
     env.expect.that_bool(v == None).equals(False)
     env.expect.that_bool(v.key == version.parse("1.0rc1").key).equals(True)
     env.expect.that_str(v.version_str).equals("1.0rc1")
-
-def _test_try_parse(name):
-    util.helper_target(native.filegroup, name = name + "_subject")
-    analysis_test(name = name, target = name + "_subject", impl = _test_try_parse_impl)
 
 def _parse_version_subject_impl(ctx):
     version.parse(ctx.attr.version_str)
@@ -276,9 +247,6 @@ _parse_version_subject = rule(
     implementation = _parse_version_subject_impl,
     attrs = {"version_str": attr.string()},
 )
-
-def _invalid_version_test_impl(env, target):
-    env.expect.that_target(target).failures().contains_predicate(matching.contains("Invalid version"))
 
 # Inputs that packaging.version.Version rejects.
 _INVALID_VERSIONS = [
@@ -315,29 +283,25 @@ def version_test_suite(name):
     Args:
         name: the name of the test suite
     """
-    test_suite(
-        name = name + "_standard",
-        tests = [
-            _test_parse_version_basic,
-            _test_parse_version_parts,
-            _test_parse_version_whitespace,
-            _test_version_to_string,
-            _test_try_parse,
-            _test_version_cmp,
-            _test_version_cmp_upstream,
-        ],
-    )
-
     invalid_test_names = []
 
     # buildifier: disable=enumerate
     for i, s in enumerate(_INVALID_VERSIONS):
         test_name = name + "_invalid_{}".format(i)
         util.helper_target(_parse_version_subject, name = test_name + "_subject", version_str = s)
-        analysis_test(name = test_name, target = test_name + "_subject", expect_failure = True, impl = _invalid_version_test_impl)
+        expect_failure_test(test_name, test_name + "_subject", "Invalid version")
         invalid_test_names.append(test_name)
 
-    native.test_suite(
+    unit_test_suite(
         name = name,
-        tests = [":" + name + "_standard"] + [":" + n for n in invalid_test_names],
+        tests = {
+            "test_parse_version_basic": _test_parse_version_basic_impl,
+            "test_parse_version_parts": _test_parse_version_parts_impl,
+            "test_parse_version_whitespace": _test_parse_version_whitespace_impl,
+            "test_version_to_string": _test_version_to_string_impl,
+            "test_try_parse": _test_try_parse_impl,
+            "test_version_cmp": _test_version_cmp_impl,
+            "test_version_cmp_upstream": _test_version_cmp_upstream_impl,
+        },
+        extra_tests = invalid_test_names,
     )

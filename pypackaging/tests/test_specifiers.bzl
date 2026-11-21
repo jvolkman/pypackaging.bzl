@@ -1,7 +1,5 @@
 """Tests for specifiers.bzl."""
 
-load("@rules_testing//lib:analysis_test.bzl", "analysis_test", "test_suite")
-load("@rules_testing//lib:truth.bzl", "matching")
 load("@rules_testing//lib:util.bzl", "util")
 
 # buildifier: disable=bzl-visibility
@@ -9,15 +7,12 @@ load("//pypackaging/private/specifiers:specifiers.bzl", "specifiers")
 
 # buildifier: disable=bzl-visibility
 load("//pypackaging/private/version:version.bzl", version_mod = "version")
+load(":test_helpers.bzl", "expect_failure_test", "unit_test_suite")
 
 def _test_specifier_basic_impl(env, _target):
     spec = specifiers.parse(">=1.0")
     env.expect.that_str(spec.operator).equals(">=")
     env.expect.that_str(spec.version).equals("1.0")
-
-def _test_specifier_basic(name):
-    util.helper_target(native.filegroup, name = name + "_subject")
-    analysis_test(name = name, target = name + "_subject", impl = _test_specifier_basic_impl)
 
 def _test_specifier_contains_impl(env, _target):
     # >=
@@ -326,23 +321,11 @@ def _test_specifier_contains_upstream_impl(env, _target):
         spec = specifiers.parse(spec_str)
         env.expect.that_bool(specifiers.contains(spec, version)).equals(False)
 
-def _test_specifier_contains_upstream(name):
-    util.helper_target(native.filegroup, name = name + "_subject")
-    analysis_test(name = name, target = name + "_subject", impl = _test_specifier_contains_upstream_impl)
-
-def _test_specifier_contains(name):
-    util.helper_target(native.filegroup, name = name + "_subject")
-    analysis_test(name = name, target = name + "_subject", impl = _test_specifier_contains_impl)
-
 def _test_specifier_set_contains_impl(env, _target):
     spec_set = specifiers.parse_set(">=1.0, <2.0")
     env.expect.that_bool(specifiers.set_contains(spec_set, "1.5")).equals(True)
     env.expect.that_bool(specifiers.set_contains(spec_set, "0.9")).equals(False)
     env.expect.that_bool(specifiers.set_contains(spec_set, "2.0")).equals(False)
-
-def _test_specifier_set_contains(name):
-    util.helper_target(native.filegroup, name = name + "_subject")
-    analysis_test(name = name, target = name + "_subject", impl = _test_specifier_set_contains_impl)
 
 def _test_contains_invalid_version_impl(env, _target):
     # packaging returns False (instead of raising) for candidates that are not
@@ -364,10 +347,6 @@ def _test_contains_invalid_version_impl(env, _target):
     env.expect.that_bool(specifiers.contains(specifiers.parse(">=1.0"), "1.0 ")).equals(True)
     env.expect.that_bool(specifiers.contains(specifiers.parse("==1.0"), "\t1.0\n")).equals(True)
     env.expect.that_bool(specifiers.contains(specifiers.parse("===1.0"), "1.0 ")).equals(False)
-
-def _test_contains_invalid_version(name):
-    util.helper_target(native.filegroup, name = name + "_subject")
-    analysis_test(name = name, target = name + "_subject", impl = _test_contains_invalid_version_impl)
 
 def _test_compatible_release_impl(env, _target):
     # ~=X.Y.Z means >=X.Y.Z, ==X.Y.*, and ==X.Y.* zero-pads shorter candidates.
@@ -429,10 +408,6 @@ def _test_compatible_release_impl(env, _target):
     ]:
         env.expect.where(spec = spec_str, version = version).that_bool(specifiers.contains(specifiers.parse(spec_str), version)).equals(expected)
 
-def _test_compatible_release(name):
-    util.helper_target(native.filegroup, name = name + "_subject")
-    analysis_test(name = name, target = name + "_subject", impl = _test_compatible_release_impl)
-
 def _spec_tuples(spec_set):
     return [(s.operator, s.version) for s in spec_set.specs]
 
@@ -456,10 +431,6 @@ def _test_parse_set_empty_items_impl(env, _target):
 
     env.expect.that_bool(specifiers.set_contains(specifiers.parse_set(" , "), "1.0")).equals(True)
 
-def _test_parse_set_empty_items(name):
-    util.helper_target(native.filegroup, name = name + "_subject")
-    analysis_test(name = name, target = name + "_subject", impl = _test_parse_set_empty_items_impl)
-
 def _parse_subject_impl(ctx):
     if ctx.attr.kind == "contains_int":
         specifiers.set_contains(specifiers.parse_set(ctx.attr.spec), 1)
@@ -475,9 +446,6 @@ _parse_subject = rule(
     implementation = _parse_subject_impl,
     attrs = {"kind": attr.string(), "spec": attr.string()},
 )
-
-def _invalid_specifier_test_impl(env, target):
-    env.expect.that_target(target).failures().contains_predicate(matching.contains("Invalid specifier"))
 
 # (kind, input) pairs that packaging rejects with InvalidSpecifier.
 _INVALID_SPECIFIERS = [
@@ -536,10 +504,6 @@ def _test_parse_specifier_edge_cases_impl(env, _target):
         env.expect.that_str(spec.operator).equals(operator)
         env.expect.that_str(spec.version).equals(version)
 
-def _test_parse_specifier_edge_cases(name):
-    util.helper_target(native.filegroup, name = name + "_subject")
-    analysis_test(name = name, target = name + "_subject", impl = _test_parse_specifier_edge_cases_impl)
-
 def _test_parsed_version_impl(env, _target):
     spec = specifiers.parse(">=1.0rc1")
     env.expect.that_collection(spec.parsed_version.release).contains_exactly([1, 0]).in_order()
@@ -564,10 +528,6 @@ def _test_parsed_version_impl(env, _target):
         env.expect.that_bool(specifiers.contains(spec, version)).equals(expected)
         env.expect.that_bool(specifiers.set_contains(struct(specs = [spec]), version)).equals(expected)
 
-def _test_parsed_version(name):
-    util.helper_target(native.filegroup, name = name + "_subject")
-    analysis_test(name = name, target = name + "_subject", impl = _test_parsed_version_impl)
-
 def _test_exclusive_ordered_impl(env, _target):
     for spec_str, version, expected in [
         (">1.0a1", "1.0a1+local", False),
@@ -591,10 +551,6 @@ def _test_exclusive_ordered_impl(env, _target):
         ("<1!1.0", "1.0", True),
     ]:
         env.expect.that_bool(specifiers.contains(specifiers.parse(spec_str), version)).equals(expected)
-
-def _test_exclusive_ordered(name):
-    util.helper_target(native.filegroup, name = name + "_subject")
-    analysis_test(name = name, target = name + "_subject", impl = _test_exclusive_ordered_impl)
 
 # Expected values below come from packaging 26.2.
 _PRE_OPTS = [None, True, False]
@@ -628,10 +584,6 @@ def _test_prereleases_contains_impl(env, _target):
             env.expect.that_bool(specifiers.set_contains(spec_set, version, prereleases = p)).equals(e)
         env.expect.that_bool(specifiers.set_contains(spec_set, version, prereleases = False, installed = True)).equals(installed)
 
-def _test_prereleases_contains(name):
-    util.helper_target(native.filegroup, name = name + "_subject")
-    analysis_test(name = name, target = name + "_subject", impl = _test_prereleases_contains_impl)
-
 def _test_prereleases_property_impl(env, _target):
     for spec_str, expected in [
         (">=1.0", False),
@@ -653,10 +605,6 @@ def _test_prereleases_property_impl(env, _target):
         ("!=1.0a1", None),
     ]:
         env.expect.that_bool(specifiers.set_prereleases(specifiers.parse_set(spec_set_str)) == expected).equals(True)
-
-def _test_prereleases_property(name):
-    util.helper_target(native.filegroup, name = name + "_subject")
-    analysis_test(name = name, target = name + "_subject", impl = _test_prereleases_property_impl)
 
 def _test_filter_impl(env, _target):
     for spec_str, versions, expected in [
@@ -693,18 +641,11 @@ def _test_filter_impl(env, _target):
     env.expect.that_collection(specifiers.set_filter(specifiers.parse_set(">=1.2.3"), parsed)).contains_exactly([parsed[1]])
     env.expect.that_collection(specifiers.filter(specifiers.parse("===1.5a1"), parsed)).contains_exactly([parsed[2]])
 
-def _test_filter(name):
-    util.helper_target(native.filegroup, name = name + "_subject")
-    analysis_test(name = name, target = name + "_subject", impl = _test_filter_impl)
-
 # A candidate that is neither a string nor a parsed version fails clearly.
 _BAD_CANDIDATES = [
     ("contains_int", ">=1"),
     ("contains_none", "===1"),
 ]
-
-def _bad_candidate_test_impl(env, target):
-    env.expect.that_target(target).failures().contains_predicate(matching.contains("version must be a string or a struct returned by version.parse"))
 
 def _test_triple_equal_non_ascii_impl(env, _target):
     # The trailing "\240" / "\205" bytes of these UTF-8 characters are not
@@ -717,53 +658,45 @@ def _test_triple_equal_non_ascii_impl(env, _target):
         env.expect.where(spec = spec_str).that_str(specifiers.parse(spec_str).version).equals(version)
         env.expect.where(spec = spec_str).that_bool(specifiers.contains(specifiers.parse(spec_str), version)).equals(True)
 
-def _test_triple_equal_non_ascii(name):
-    util.helper_target(native.filegroup, name = name + "_subject")
-    analysis_test(name = name, target = name + "_subject", impl = _test_triple_equal_non_ascii_impl)
-
 def specifiers_test_suite(name):
     """Sets up the specifier tests.
 
     Args:
         name: the name of the test suite
     """
-    test_suite(
-        name = name + "_standard",
-        tests = [
-            _test_specifier_basic,
-            _test_specifier_contains,
-            _test_specifier_set_contains,
-            _test_specifier_contains_upstream,
-            _test_contains_invalid_version,
-            _test_compatible_release,
-            _test_parse_set_empty_items,
-            _test_parse_specifier_edge_cases,
-            _test_parsed_version,
-            _test_exclusive_ordered,
-            _test_prereleases_contains,
-            _test_prereleases_property,
-            _test_filter,
-            _test_triple_equal_non_ascii,
-        ],
-    )
-
     invalid_test_names = []
 
     # buildifier: disable=enumerate
     for i, (kind, spec) in enumerate(_INVALID_SPECIFIERS):
         test_name = name + "_invalid_{}".format(i)
         util.helper_target(_parse_subject, name = test_name + "_subject", kind = kind, spec = spec)
-        analysis_test(name = test_name, target = test_name + "_subject", expect_failure = True, impl = _invalid_specifier_test_impl)
+        expect_failure_test(test_name, test_name + "_subject", "Invalid specifier")
         invalid_test_names.append(test_name)
 
     # buildifier: disable=enumerate
     for i, (kind, spec) in enumerate(_BAD_CANDIDATES):
         test_name = name + "_bad_candidate_{}".format(i)
         util.helper_target(_parse_subject, name = test_name + "_subject", kind = kind, spec = spec)
-        analysis_test(name = test_name, target = test_name + "_subject", expect_failure = True, impl = _bad_candidate_test_impl)
+        expect_failure_test(test_name, test_name + "_subject", "version must be a string or a struct returned by version.parse")
         invalid_test_names.append(test_name)
 
-    native.test_suite(
+    unit_test_suite(
         name = name,
-        tests = [":" + name + "_standard"] + [":" + n for n in invalid_test_names],
+        tests = {
+            "test_specifier_basic": _test_specifier_basic_impl,
+            "test_specifier_contains": _test_specifier_contains_impl,
+            "test_specifier_set_contains": _test_specifier_set_contains_impl,
+            "test_specifier_contains_upstream": _test_specifier_contains_upstream_impl,
+            "test_contains_invalid_version": _test_contains_invalid_version_impl,
+            "test_compatible_release": _test_compatible_release_impl,
+            "test_parse_set_empty_items": _test_parse_set_empty_items_impl,
+            "test_parse_specifier_edge_cases": _test_parse_specifier_edge_cases_impl,
+            "test_parsed_version": _test_parsed_version_impl,
+            "test_exclusive_ordered": _test_exclusive_ordered_impl,
+            "test_prereleases_contains": _test_prereleases_contains_impl,
+            "test_prereleases_property": _test_prereleases_property_impl,
+            "test_filter": _test_filter_impl,
+            "test_triple_equal_non_ascii": _test_triple_equal_non_ascii_impl,
+        },
+        extra_tests = invalid_test_names,
     )

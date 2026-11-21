@@ -4,7 +4,7 @@ Derived from pypa/packaging: packaging/utils.py (Apache 2.0 / BSD).
 """
 
 load("//pypackaging/private/tags:tags.bzl", "tags")
-load("//pypackaging/private/version:version.bzl", "try_parse_version", "version_to_string")
+load("//pypackaging/private/version:version.bzl", "format_version", "try_parse_version")
 
 visibility(["//", "//pypackaging/..."])
 
@@ -13,16 +13,9 @@ _UPPER = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 _DIGITS = "0123456789"
 _VALID_NORMALIZED_START = _LOWER + _DIGITS
 _VALID_NORMALIZED_CHAR = _VALID_NORMALIZED_START + "-"
-
-# ASCII characters not matched by packaging's r"[\w\d._]" (re.UNICODE): ASCII
-# control characters, space and punctuation other than "_" and ".".
-_INVALID_ASCII_WHEEL_NAME_CHARS = (
-    "\000\001\002\003\004\005\006\007\010\011\012\013\014\015\016\017" +
-    "\020\021\022\023\024\025\026\027\030\031\032\033\034\035\036\037" +
-    "\177 !\"#$%&'()*+,-/:;<=>?@[\\]^`{|}~"
-)
 _VALID_NAME_START = _LOWER + _UPPER + _DIGITS
 _VALID_NAME_CHAR = _VALID_NAME_START + "._-"
+_VALID_ASCII_WHEEL_NAME_CHARS = _VALID_NAME_START + "._"
 
 def _is_valid_name(name):
     # Equivalent to packaging's
@@ -31,12 +24,7 @@ def _is_valid_name(name):
         return False
     if name[0] not in _VALID_NAME_START or name[-1] not in _VALID_NAME_START:
         return False
-
-    # buildifier: disable=string-iteration
-    for c in name.elems():
-        if c not in _VALID_NAME_CHAR:
-            return False
-    return True
+    return not name.lstrip(_VALID_NAME_CHAR)
 
 def canonicalize_name(name, validate = False):
     """Takes a valid Python package or extra name, and returns the normalized form of it.
@@ -59,14 +47,18 @@ def canonicalize_name(name, validate = False):
     if validate and not _is_valid_name(name):
         fail("name is invalid: {}".format(repr(name)))
 
-    value = name.lower().replace("_", "-").replace(".", "-")
+    value = name.lower()
+    if "_" in value:
+        value = value.replace("_", "-")
+    if "." in value:
+        value = value.replace(".", "-")
 
     # Collapse repeats
-    for _i in range(len(value)):
-        if "--" in value:
+    if "--" in value:
+        for _ in range(len(value)):
             value = value.replace("--", "-")
-        else:
-            break
+            if "--" not in value:
+                break
     return value
 
 def is_normalized_name(name):
@@ -87,22 +79,11 @@ def is_normalized_name(name):
     # Equivalent to regex: ^[a-z0-9]+(?:-[a-z0-9]+)*$
     if not name:
         return False
-
-    if name[0] not in _VALID_NORMALIZED_START:
+    if name[0] not in _VALID_NORMALIZED_START or name[-1] not in _VALID_NORMALIZED_START:
         return False
-
-    if name[-1] not in _VALID_NORMALIZED_START:
-        return False
-
     if "--" in name:
         return False
-
-    # buildifier: disable=string-iteration
-    for c in name.elems():
-        if c not in _VALID_NORMALIZED_CHAR:
-            return False
-
-    return True
+    return not name.lstrip(_VALID_NORMALIZED_CHAR)
 
 def canonicalize_version(version_input, strip_trailing_zero = True):
     """Return a canonical form of a version as a string.
@@ -125,36 +106,19 @@ def canonicalize_version(version_input, strip_trailing_zero = True):
         v = try_parse_version(version_input)
         if v == None:
             return version_input
-
-    # Strip trailing zeros from the release, keeping at least one segment.
-    if strip_trailing_zero:
-        release = v.release
-        i = len(release)
-        for _ in range(len(release)):
-            if i > 1 and release[i - 1] == 0:
-                i -= 1
-            else:
-                break
-        if i != len(release):
-            v = struct(
-                epoch = v.epoch,
-                release = release[:i],
-                pre = v.pre,
-                post = v.post,
-                dev = v.dev,
-                local = v.local,
-            )
-
-    return version_to_string(v)
+    return format_version(v, strip_trailing_zero = strip_trailing_zero)
 
 def _is_valid_wheel_name(name):
     # Equivalent to packaging's re.match(r"^[\w\d._]*$", name, re.UNICODE),
     # except that every non-ASCII character is accepted: Starlark can't tell
     # Unicode letters and digits from other characters.
+    rest = name.lstrip(_VALID_ASCII_WHEEL_NAME_CHARS)
+    if not rest:
+        return True
 
     # buildifier: disable=string-iteration
-    for c in name.elems():
-        if c in _INVALID_ASCII_WHEEL_NAME_CHARS:
+    for c in rest.elems():
+        if c < "\200" and c not in _VALID_ASCII_WHEEL_NAME_CHARS:
             return False
     return True
 
@@ -206,21 +170,11 @@ def parse_wheel_filename(filename, validate_order = False):
 
     if dashes == 5:
         build_part = parts[2]
-
-        # Equivalent to regex: ^(\d+)(.*)$
-        if not build_part or build_part[0] not in _DIGITS:
+        rest = build_part.lstrip(_DIGITS)
+        i = len(build_part) - len(rest)
+        if not i:
             fail("Invalid build number: {} in {}".format(build_part, repr(filename)))
-
-        i = 0
-
-        # buildifier: disable=string-iteration
-        for c in build_part.elems():
-            if c in _DIGITS:
-                i += 1
-            else:
-                break
-
-        build = (int(build_part[:i]), build_part[i:])
+        build = (int(build_part[:i]), rest)
     else:
         build = ()
 

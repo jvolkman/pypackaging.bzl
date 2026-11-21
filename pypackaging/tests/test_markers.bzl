@@ -1,11 +1,10 @@
 """Tests for markers.bzl."""
 
-load("@rules_testing//lib:analysis_test.bzl", "analysis_test", "test_suite")
-load("@rules_testing//lib:truth.bzl", "matching")
 load("@rules_testing//lib:util.bzl", "util")
 
 # buildifier: disable=bzl-visibility
 load("//pypackaging/private/markers:markers.bzl", "markers")
+load(":test_helpers.bzl", "expect_failure_test", "unit_test_suite")
 
 _ENV = {
     "implementation_name": "cpython",
@@ -61,10 +60,6 @@ def _test_marker_parser_impl(env, _target):
     env.expect.that_int(len(m)).equals(1)
     item = m[0]
     env.expect.that_str(item[1]).equals("not in")
-
-def _test_marker_parser(name):
-    util.helper_target(native.filegroup, name = name + "_subject")
-    analysis_test(name = name, target = name + "_subject", impl = _test_marker_parser_impl)
 
 def _test_marker_evaluation_impl(env, _target):
     env_vars = {
@@ -188,10 +183,6 @@ def _test_marker_evaluation_impl(env, _target):
     m = markers.parse("(python_version < '3.6' or os_name == 'posix') and sys_platform == 'linux'")
     env.expect.that_bool(markers.evaluate(m, env_vars_prec)).equals(False)
 
-def _test_marker_evaluation(name):
-    util.helper_target(native.filegroup, name = name + "_subject")
-    analysis_test(name = name, target = name + "_subject", impl = _test_marker_evaluation_impl)
-
 def _test_version_marker_fallback_impl(env, _target):
     # Upstream `_eval_op`: an invalid environment version makes the comparison
     # False instead of failing.
@@ -247,10 +238,6 @@ def _test_version_marker_fallback_impl(env, _target):
     env.expect.that_bool(_eval("python_full_version === '3.12.1+'", python_full_version = "3.12.1+")).equals(False)
     env.expect.that_bool(_eval("'local' in python_full_version", python_full_version = "3.12.1+")).equals(True)
 
-def _test_version_marker_fallback(name):
-    util.helper_target(native.filegroup, name = name + "_subject")
-    analysis_test(name = name, target = name + "_subject", impl = _test_version_marker_fallback_impl)
-
 def _test_string_operator_table_impl(env, _target):
     # Upstream `_operators`: `<`/`>` are always False, `<=`/`>=` mean equality.
     env.expect.that_bool(_eval("platform_machine < 'z'")).equals(False)
@@ -268,10 +255,6 @@ def _test_string_operator_table_impl(env, _target):
 
     # Variable-vs-variable compares against the right-hand variable's name.
     env.expect.that_bool(_eval("os_name == python_version", os_name = "python_version")).equals(True)
-
-def _test_string_operator_table(name):
-    util.helper_target(native.filegroup, name = name + "_subject")
-    analysis_test(name = name, target = name + "_subject", impl = _test_string_operator_table_impl)
 
 def _test_list_valued_extra_impl(env, _target):
     active = ["Foo.Bar", "baz", "extra-5-mypkg-cpu"]
@@ -306,10 +289,6 @@ def _test_list_valued_extra_impl(env, _target):
     env.expect.that_bool(_eval("extra < 'z'", extra = "Foo.Bar")).equals(False)
     env.expect.that_bool(_eval("extra <= 'foo-bar'", extra = "Foo.Bar")).equals(True)
 
-def _test_list_valued_extra(name):
-    util.helper_target(native.filegroup, name = name + "_subject")
-    analysis_test(name = name, target = name + "_subject", impl = _test_list_valued_extra_impl)
-
 def _test_marker_aliases_impl(env, _target):
     # `python_implementation` is an alias for `platform_python_implementation`.
     env.expect.that_bool(_eval("python_implementation == 'CPython'")).equals(True)
@@ -320,10 +299,6 @@ def _test_marker_aliases_impl(env, _target):
     # Dotted names map to the underscore form.
     env.expect.that_bool(_eval("os.name == 'posix' and sys.platform == 'linux'")).equals(True)
     env.expect.that_bool(_eval("platform.machine == 'x86_64' and platform.version == ''")).equals(True)
-
-def _test_marker_aliases(name):
-    util.helper_target(native.filegroup, name = name + "_subject")
-    analysis_test(name = name, target = name + "_subject", impl = _test_marker_aliases_impl)
 
 def _test_marker_string_literals_impl(env, _target):
     # Quoted strings are decoded like Python string literals (ast.literal_eval).
@@ -342,10 +317,6 @@ def _test_marker_string_literals_impl(env, _target):
 
     # Unknown escapes are kept verbatim.
     env.expect.that_str(markers.parse("os_name == '\\q\\8'")[0][2].value).equals("\\q\\8")
-
-def _test_marker_string_literals(name):
-    util.helper_target(native.filegroup, name = name + "_subject")
-    analysis_test(name = name, target = name + "_subject", impl = _test_marker_string_literals_impl)
 
 def _test_marker_grammar_impl(env, _target):
     # The empty string is accepted (always true); upstream rejects it.
@@ -376,10 +347,6 @@ def _test_marker_grammar_impl(env, _target):
     m = markers.parse("(extra == 'Foo_Bar')")
     env.expect.that_str(m[0][0][2].value).equals("foo-bar")
 
-def _test_marker_grammar(name):
-    util.helper_target(native.filegroup, name = name + "_subject")
-    analysis_test(name = name, target = name + "_subject", impl = _test_marker_grammar_impl)
-
 def _test_marker_to_string_impl(env, _target):
     cases = [
         ("os_name=='posix'", "os_name == \"posix\""),
@@ -400,10 +367,6 @@ def _test_marker_to_string_impl(env, _target):
     for src, expected in cases:
         env.expect.where(marker = src).that_str(markers.to_string(markers.parse(src))).equals(expected)
     env.expect.that_str(markers.to_string([])).equals("")
-
-def _test_marker_to_string(name):
-    util.helper_target(native.filegroup, name = name + "_subject")
-    analysis_test(name = name, target = name + "_subject", impl = _test_marker_to_string_impl)
 
 # Failure cases: (marker, environment overrides or None to only parse, expected
 # message fragments).
@@ -483,13 +446,6 @@ _failure_subject = rule(
     },
 )
 
-def _make_failure_test_impl(fragments):
-    def _impl(env, target):
-        for fragment in fragments:
-            env.expect.that_target(target).failures().contains_predicate(matching.contains(fragment))
-
-    return _impl
-
 def _failure_tests(name):
     names = []
 
@@ -508,12 +464,7 @@ def _failure_tests(name):
             marker = marker,
             env_overrides = env_overrides,
         )
-        analysis_test(
-            name = test_name,
-            target = test_name + "_subject",
-            expect_failure = True,
-            impl = _make_failure_test_impl(fragments),
-        )
+        expect_failure_test(test_name, test_name + "_subject", fragments)
         names.append(test_name)
     return names
 
@@ -523,23 +474,19 @@ def markers_test_suite(name):
     Args:
         name: the name of the test suite
     """
-    test_suite(
-        name = name + "_standard",
-        tests = [
-            _test_marker_parser,
-            _test_marker_evaluation,
-            _test_version_marker_fallback,
-            _test_string_operator_table,
-            _test_list_valued_extra,
-            _test_marker_aliases,
-            _test_marker_string_literals,
-            _test_marker_grammar,
-            _test_marker_to_string,
-        ],
-    )
-
     failure_tests = _failure_tests(name + "_failure")
-    native.test_suite(
+    unit_test_suite(
         name = name,
-        tests = [":" + name + "_standard"] + [":" + n for n in failure_tests],
+        tests = {
+            "test_marker_parser": _test_marker_parser_impl,
+            "test_marker_evaluation": _test_marker_evaluation_impl,
+            "test_version_marker_fallback": _test_version_marker_fallback_impl,
+            "test_string_operator_table": _test_string_operator_table_impl,
+            "test_list_valued_extra": _test_list_valued_extra_impl,
+            "test_marker_aliases": _test_marker_aliases_impl,
+            "test_marker_string_literals": _test_marker_string_literals_impl,
+            "test_marker_grammar": _test_marker_grammar_impl,
+            "test_marker_to_string": _test_marker_to_string_impl,
+        },
+        extra_tests = failure_tests,
     )

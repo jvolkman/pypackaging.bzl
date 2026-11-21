@@ -27,40 +27,38 @@ _IDENTIFIER_CHARS = _IDENTIFIER_START + "._-"
 # (case-sensitive); it matches iff "+" is followed by one of these.
 _LOCAL_LABEL_START = "abcdefghijklmnopqrstuvwxyz0123456789"
 
-def _match_identifier(src, pos):
+def _match_identifier(src, n, pos):
     """Matches upstream IDENTIFIER (`\\b[a-zA-Z0-9][a-zA-Z0-9._-]*\\b`).
 
     Returns:
         The end position of the match, or None.
     """
-    n = len(src)
     if pos >= n or src[pos] not in _IDENTIFIER_START:
         return None
     if pos > 0 and is_word_char(src[pos - 1]):
         return None
-    end = pos + 1
-    for _ in range(n - end):
-        if src[end] in _IDENTIFIER_CHARS:
-            end += 1
-        else:
-            break
+    rest = src[pos:].lstrip(_IDENTIFIER_CHARS)
+    end = n - len(rest)
+
+    if is_word_char(src[end - 1]) and (end == n or not is_word_char(src[end])):
+        return end
 
     # Backtrack until the match ends on a word boundary.
+    end -= 1
     for _ in range(end - pos):
         if is_word_char(src[end - 1]) and (end == n or not is_word_char(src[end])):
             return end
         end -= 1
     return None
 
-def _parse_requirement_marker(ctx, pos, span_start, expected):
+def _parse_requirement_marker(ctx, src, n, pos, span_start, expected):
     """requirement_marker = SEMICOLON marker WS?"""
-    src = ctx.src
-    if pos >= len(src) or src[pos] != ";":
+    if pos >= n or src[pos] != ";":
         syntax_error(ctx, "Expected {} or end".format(expected), span_start, pos)
     pos += 1
     marker_start = pos
     marker, pos = parse_marker_expression(ctx, pos)
-    pos = skip_ws(src, pos)
+    pos = skip_ws(src, pos, n)
     return marker, src[marker_start:pos].strip(" \t"), pos
 
 def _parse(req_str):
@@ -74,41 +72,41 @@ def _parse(req_str):
     n = len(src)
 
     # requirement = WS? IDENTIFIER WS? extras WS? requirement_details END
-    pos = skip_ws(src, 0)
-    end = _match_identifier(src, pos)
+    pos = skip_ws(src, 0, n)
+    end = _match_identifier(src, n, pos)
     if end == None:
         syntax_error(ctx, "Expected package name at the start of dependency specifier", pos)
     name = src[pos:end]
-    pos = skip_ws(src, end)
+    pos = skip_ws(src, end, n)
 
     # extras = (LEFT_BRACKET WS? extras_list? WS? RIGHT_BRACKET)?
     extras = []
     if pos < n and src[pos] == "[":
         open_pos = pos
-        pos = skip_ws(src, pos + 1)
+        pos = skip_ws(src, pos + 1, n)
 
         # extras_list = IDENTIFIER (WS? COMMA WS? IDENTIFIER)*
-        end = _match_identifier(src, pos)
+        end = _match_identifier(src, n, pos)
         if end != None:
             extras.append(src[pos:end])
             pos = end
-            for _ in range(n):
-                pos = skip_ws(src, pos)
-                if _match_identifier(src, pos) != None:
+            for _ in range(n - pos):
+                pos = skip_ws(src, pos, n)
+                if _match_identifier(src, n, pos) != None:
                     syntax_error(ctx, "Expected comma between extra names", pos)
                 if pos >= n or src[pos] != ",":
                     break
-                pos = skip_ws(src, pos + 1)
-                end = _match_identifier(src, pos)
+                pos = skip_ws(src, pos + 1, n)
+                end = _match_identifier(src, n, pos)
                 if end == None:
                     syntax_error(ctx, "Expected extra name after comma", pos)
                 extras.append(src[pos:end])
                 pos = end
-        pos = skip_ws(src, pos)
+        pos = skip_ws(src, pos, n)
         if pos >= n or src[pos] != "]":
             syntax_error(ctx, "Expected matching RIGHT_BRACKET for LEFT_BRACKET, after extras", open_pos, pos)
         pos += 1
-    pos = skip_ws(src, pos)
+    pos = skip_ws(src, pos, n)
 
     # requirement_details = AT URL (WS requirement_marker?)?
     #                     | specifier WS? (requirement_marker)?
@@ -117,27 +115,27 @@ def _parse(req_str):
     marker = None
     marker_str = None
     if pos < n and src[pos] == "@":
-        pos = skip_ws(src, pos + 1)
+        pos = skip_ws(src, pos + 1, n)
         url_start = pos
-        end = pos
-        for _ in range(n - pos):
-            if src[end] not in " \t":
-                end += 1
-            else:
-                break
+        sp = src.find(" ", pos)
+        tb = src.find("\t", pos)
+        if sp == -1:
+            end = tb if tb != -1 else n
+        elif tb == -1:
+            end = sp
+        else:
+            end = sp if sp < tb else tb
         if end == pos:
             syntax_error(ctx, "Expected URL after @", pos)
         url = src[pos:end]
         pos = end
-        if not at_end(src, pos):
-            # Upstream expects WS here. The URL runs up to a space or tab, so
-            # this can't fail; it is kept as an assertion.
-            if src[pos] not in " \t":
-                syntax_error(ctx, "Expected whitespace after URL", pos)
-            pos = skip_ws(src, pos)
-            if not at_end(src, pos):
+        if not at_end(src, pos, n):
+            pos = skip_ws(src, pos, n)
+            if not at_end(src, pos, n):
                 marker, marker_str, pos = _parse_requirement_marker(
                     ctx,
+                    src,
+                    n,
                     pos,
                     url_start,
                     "semicolon (after URL and whitespace)",
@@ -150,26 +148,29 @@ def _parse(req_str):
         if pos < n and src[pos] == "(":
             paren_pos = pos
             pos += 1
-        pos = skip_ws(src, pos)
+        pos = skip_ws(src, pos, n)
 
         # version_many = (SPECIFIER (WS? COMMA WS? SPECIFIER)*)?
         # (a trailing comma is accepted, like upstream)
-        for _ in range(n):
-            token_len, spec = match_specifier_token(src[pos:])
-            if not token_len:
-                break
-            token_start = pos
-            pos += token_len
-            specs.append(spec)
-            if src.startswith(".*", pos):
-                syntax_error(ctx, ".* suffix can only be used with `==` or `!=` operators", token_start, pos + 1)
-            if src.startswith("+", pos) and src[pos + 1:pos + 2] and src[pos + 1] in _LOCAL_LABEL_START:
-                syntax_error(ctx, "Local version label can only be used with `==` or `!=` operators", token_start, pos)
-            pos = skip_ws(src, pos)
-            if pos >= n or src[pos] != ",":
-                break
-            pos = skip_ws(src, pos + 1)
-        pos = skip_ws(src, pos)
+        if pos < n and src[pos] in "=!<~>":
+            for _ in range(n - pos):
+                if pos >= n or src[pos] not in "=!<~>":
+                    break
+                token_len, spec = match_specifier_token(src[pos:])
+                if not token_len:
+                    break
+                token_start = pos
+                pos += token_len
+                specs.append(spec)
+                if src.startswith(".*", pos):
+                    syntax_error(ctx, ".* suffix can only be used with `==` or `!=` operators", token_start, pos + 1)
+                if pos + 1 < n and src[pos] == "+" and src[pos + 1] in _LOCAL_LABEL_START:
+                    syntax_error(ctx, "Local version label can only be used with `==` or `!=` operators", token_start, pos)
+                pos = skip_ws(src, pos, n)
+                if pos >= n or src[pos] != ",":
+                    break
+                pos = skip_ws(src, pos + 1, n)
+        pos = skip_ws(src, pos, n)
         if paren_pos != None:
             if pos >= n or src[pos] != ")":
                 syntax_error(
@@ -179,16 +180,18 @@ def _parse(req_str):
                     pos,
                 )
             pos += 1
-        pos = skip_ws(src, pos)
-        if not at_end(src, pos):
+        pos = skip_ws(src, pos, n)
+        if not at_end(src, pos, n):
             marker, marker_str, pos = _parse_requirement_marker(
                 ctx,
+                src,
+                n,
                 pos,
                 specifier_start,
                 "comma (within version specifier), semicolon (after version specifier)" if specs else "semicolon (after name with no version specifier)",
             )
 
-    if not at_end(src, pos):
+    if not at_end(src, pos, n):
         syntax_error(ctx, "Expected end of dependency specifier", pos)
 
     return struct(
@@ -250,12 +253,23 @@ def _parse_requirement(req_str):
         )
 
     parsed = _parse(req_str)
+    raw_extras = parsed.extras
+    if not raw_extras:
+        extras = []
+        dedup_raw_extras = []
+    elif len(raw_extras) == 1:
+        extras = [utils.canonicalize_name(raw_extras[0])]
+        dedup_raw_extras = raw_extras
+    else:
+        extras = sorted({utils.canonicalize_name(e): True for e in raw_extras})
+        dedup_raw_extras = sorted({e: True for e in raw_extras})
+
     return struct(
         name = utils.canonicalize_name(parsed.name),
         raw_name = parsed.name,
         url = parsed.url,
-        extras = sorted({utils.canonicalize_name(e): True for e in parsed.extras}.keys()),
-        raw_extras = sorted({e: True for e in parsed.extras}.keys()),
+        extras = extras,
+        raw_extras = dedup_raw_extras,
         specifier = None if parsed.url != None else _specifier_set(parsed.specs),
         marker = parsed.marker,
         marker_str = parsed.marker_str,
@@ -269,7 +283,7 @@ def _specifier_set(specs):
         specs: The specifier structs matched by the tokenizer.
     """
     for spec in specs:
-        if "," in spec.version:
+        if spec.operator == "===" and "," in spec.version:
             # Only an `===` version can contain a comma. Upstream joins the
             # specifiers and splits the result on commas, which fails here.
             return specifiers.parse_set(",".join([s.operator + s.version for s in specs]))
@@ -279,10 +293,15 @@ def _spec_str(spec):
     return spec.operator + spec.version
 
 def _spec_key(spec):
-    if spec.operator == "===" or spec.version.endswith(".*"):
-        return (spec.operator, spec.version)
-    v = getattr(spec, "parsed_version", None) or spec.version
-    return (spec.operator, utils.canonicalize_version(v, strip_trailing_zero = spec.operator != "~="))
+    op = spec.operator
+    if op == "===" or spec.version.endswith(".*"):
+        return (op, spec.version)
+    v = getattr(spec, "parsed_version", None)
+    if v != None:
+        if op == "~=":
+            return (op, v.epoch, v.release, v.pre, v.post, v.dev, v.local)
+        return (op, v.key)
+    return (op, utils.canonicalize_version(spec.version, strip_trailing_zero = op != "~="))
 
 def _requirement_to_string(req):
     """Serializes a parsed requirement like upstream `str(Requirement)`.
@@ -302,14 +321,18 @@ def _requirement_to_string(req):
         parts.append("[{}]".format(",".join(req.raw_extras)))
 
     if req.specifier != None and req.specifier.specs:
-        seen = {}
-        spec_strs = []
-        for spec in sorted(req.specifier.specs, key = _spec_str):
-            key = _spec_key(spec)
-            if key not in seen:
-                seen[key] = True
-                spec_strs.append(_spec_str(spec))
-        parts.append(",".join(spec_strs))
+        specs = req.specifier.specs
+        if len(specs) == 1:
+            parts.append(specs[0].operator + specs[0].version)
+        else:
+            seen = {}
+            spec_strs = []
+            for spec in sorted(specs, key = _spec_str):
+                key = _spec_key(spec)
+                if key not in seen:
+                    seen[key] = True
+                    spec_strs.append(spec.operator + spec.version)
+            parts.append(",".join(spec_strs))
 
     if req.url:
         parts.append(" @ " + req.url)
