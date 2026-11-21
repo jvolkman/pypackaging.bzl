@@ -355,6 +355,8 @@ def _literal(value):
     if isinstance(value, str):
         return json.dumps(value, ensure_ascii=False)
     if isinstance(value, tuple):
+        if len(value) == 1:
+            return "({},)".format(_literal(value[0]))
         return "({})".format(", ".join([_literal(v) for v in value]))
     if isinstance(value, list):
         return "[{}]".format(", ".join([_literal(v) for v in value]))

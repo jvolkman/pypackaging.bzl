@@ -22,6 +22,7 @@ _TYPE_NAMES = {
     dict: "dict",
     int: "int",
     list: "list",
+    set: "set",
     str: "string",
     tuple: "tuple",
     type(None): "NoneType",

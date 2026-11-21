@@ -20,6 +20,7 @@ pypackaging/tests/packaging_cases/*.bzl linguist-generated=true
 conformance export-ignore
 doc_extract export-ignore
 docs export-ignore
+e2e/workspace export-ignore
 perf export-ignore
 pypackaging/tests export-ignore
 tools export-ignore

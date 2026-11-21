@@ -8,6 +8,9 @@ local_path_override(
     path = "..",
 )
 
+rules_python_config = use_extension("@rules_python//python/extensions:config.bzl", "config")
+rules_python_config.explicit_init_py(default = True)
+
 http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 
 # The reference implementation. The sdist is used, because the wheel does not

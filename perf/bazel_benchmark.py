@@ -11,8 +11,10 @@ iterations. See the README.md for details.
 import argparse
 import itertools
 import os
+import shlex
 import statistics
 import subprocess
+import sys
 import time
 
 _TARGET = "//:bazel_benchmark_analysis"
@@ -30,7 +32,12 @@ def _build(bazel, workload, iterations):
         "--//:iterations={}".format(iterations + next(_UNIQUE)),
     ]
     start = time.perf_counter()
-    subprocess.run(cmd, check=True, capture_output=True)
+    try:
+        subprocess.run(cmd, check=True, capture_output=True, text=True)
+    except subprocess.CalledProcessError as exc:
+        if exc.stderr:
+            sys.stderr.write(exc.stderr)
+        raise
     return time.perf_counter() - start
 
 
@@ -83,7 +90,7 @@ def main():
     if workspace:
         os.chdir(workspace)
 
-    bazel = args.bazel.split()
+    bazel = shlex.split(args.bazel)
     workloads = [w for w in args.workloads.split(",") if args.filter in w]
     if not workloads:
         parser.error("No workload matches: " + args.filter)

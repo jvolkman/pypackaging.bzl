@@ -29,6 +29,6 @@ package_metadata(
     purl = "pkg:bazel/{}@{}".format(
         module_name(),
         module_version(),
-    ) if module_name() else "pkg:bazel/pypackaging.bzl",
+    ) if module_name() and module_version() else "pkg:bazel/pypackaging.bzl",
     visibility = ["//visibility:public"],
 )
