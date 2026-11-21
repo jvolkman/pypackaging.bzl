@@ -1,6 +1,6 @@
 matrix:
-  platform: ["debian12", "ubuntu2404", "macos", "macos_arm64", "windows"]
-  bazel: ["7.x", "8.x", "9.x"]
+  platform: ["debian13", "ubuntu2404", "macos", "macos_arm64", "windows"]
+  bazel: ["8.x", "9.x"]
 tasks:
   verify_targets:
     name: "Verify build targets"
@@ -11,8 +11,8 @@ tasks:
 bcr_test_module:
   module_path: "e2e/smoke"
   matrix:
-    platform: ["debian12", "ubuntu2404", "macos", "macos_arm64", "windows"]
-    bazel: ["7.x", "8.x", "9.x"]
+    platform: ["debian13", "ubuntu2404", "macos", "macos_arm64", "windows"]
+    bazel: ["8.x", "9.x"]
   tasks:
     run_tests:
       name: "Run smoke test"

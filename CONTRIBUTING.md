@@ -13,6 +13,6 @@
 - Formatting and lint: run `pre-commit run --all-files` before sending a
   change (or install the git hook with `pre-commit install`).
 - To test against another Bazel version, set `USE_BAZEL_VERSION` (e.g.
-  `USE_BAZEL_VERSION=9.x`) and pass `--lockfile_mode=off`. On Bazel 7, pass
+  `USE_BAZEL_VERSION=9.x`) and pass `--lockfile_mode=off`. On Bazel 8.0, pass
   `--ignore_all_rc_files` (`bazel --ignore_all_rc_files test //...`) because
-  `tools/preset.bazelrc` targets Bazel 8+.
+  `tools/preset.bazelrc` targets the pinned Bazel version.
