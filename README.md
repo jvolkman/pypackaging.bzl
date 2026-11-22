@@ -24,7 +24,7 @@ Add to your `MODULE.bazel` file (see the
 latest version):
 
 ```starlark
-bazel_dep(name = "pypackaging.bzl", version = "0.3.0")
+bazel_dep(name = "pypackaging.bzl", version = "0.4.0")
 ```
 
 ### WORKSPACE

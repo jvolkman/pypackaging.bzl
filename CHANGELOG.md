@@ -6,20 +6,65 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 While the version is 0.x, breaking changes are released as minor versions.
 
-## [Unreleased]
+## [0.4.0] - 2026-11-22
+
+Aligns the library with `pypa/packaging` 26.3 (plus `#1438` set-of-extras
+marker evaluation), adds `markers.evaluate_partial` and Bazel 7/8 `WORKSPACE`
+support, and speeds up Starlark hot paths by 1.5x to 4x.
+
+### Breaking changes
+
+- Native `linux_<arch>` tags now rank ahead of `manylinux_*` and `musllinux_*`
+  tags (`pypa/packaging#1187`).
+- Empty `extra` collections (`[]`, `()`, `set()`) now evaluate like `""`
+  (`extra == ""` is `True`), matching `pypa/packaging#1438`.
+- Trailing newlines are rejected by `markers.parse` and `requirements.parse`
+  (`pypa/packaging#1345`).
+- `tags.parse_tag` rejects empty tag components and non-identifier interpreters
+  (`pypa/packaging#1234`, `pypa/packaging#1351`).
+- `utils.parse_wheel_filename` and `utils.parse_sdist_filename` reject empty
+  project names (`pypa/packaging#1305`).
+- `markers.to_string` quotes strings with single quotes when the value contains
+  `"` and fails if a value contains both `"` and `'` (`pypa/packaging#1213`).
 
 ### Added
 
-- WORKSPACE is supported again with Bazel 7 and 8: define the repository with
-  the name `pypackaging.bzl`, see the README. `e2e/workspace` tests it.
-- `markers.evaluate_partial` evaluates a marker with a part of the
-  environment, e.g. only with `extra` or only with the platform, and returns
-  `True`, `False` or the marker that is left to evaluate.
+- `WORKSPACE` is supported again with Bazel 7 and 8: define the repository with
+  the name `pypackaging.bzl` (see the README; tested by `e2e/workspace`).
+- `markers.evaluate_partial(markers, environment)` evaluates a marker with a
+  partial environment and returns `True`, `False`, or a simplified marker tree.
+- `environment["extra"]` now accepts a `set` in addition to `list` and `tuple`
+  (`pypa/packaging#1438`).
+- Standalone `perf/` (CPython line-step counter + Bazel analysis wall-time
+  benchmark) and `conformance/` (test cases generated from the
+  `packaging==26.3` sdist) developer modules.
 
 ### Changed
 
-- `markers.evaluate` is faster: a version comparison that is repeated in a
-  marker is parsed once and the common variables are parsed with fewer steps.
+- Starlark performance optimizations across `markers`, `tags`, `version`,
+  `specifiers`, `requirements`, and `utils` (1.5x–4x across hot paths, plus an
+  additional 12%–23% speedup in `markers.evaluate` via single environment type
+  checks, per-call specifier caching, direct parsed-specifier matching, and
+  frequency-ordered variable matching).
+- Consolidated `pypackaging/private/tags/` into a single `tags.bzl` module.
+- Updated `.bcr/presubmit.yml` from `debian12` to `debian13` and excluded
+  `e2e/workspace` from release archives.
+- Release notes now link to `CHANGELOG.md` and inline the matching version
+  section.
+
+### Fixed
+
+- Fixed macOS `"fat32"` binary format typo to `"fat3"` (`pypa/packaging#1199`).
+- Deduplicated `abi3t` tags and scanned all ABIs on free-threaded CPython
+  (`pypa/packaging#1245`, `pypa/packaging#1555`).
+- Normalized string literals compared against `extras` and `dependency_groups`
+  at parse time (`pypa/packaging#1310`).
+- Emitted upstream's clearer error message when `.*` follows `==` or `!=` on
+  pre-release, post-release, dev, or local versions (`pypa/packaging#1299`).
+- Wrapped invalid `===` comma-split specifier errors with
+  `Invalid requirement:` (`pypa/packaging#1332`).
+- Guarded `package_metadata`'s `purl` when `module_name()` or
+  `module_version()` is empty or `None`.
 
 ## [0.3.0] - 2026-10-16
 
@@ -119,5 +164,6 @@ Tags and utilities:
 
 See the [GitHub releases](https://github.com/jvolkman/pypackaging.bzl/releases).
 
+[0.4.0]: https://github.com/jvolkman/pypackaging.bzl/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/jvolkman/pypackaging.bzl/compare/v0.2.2...v0.3.0
 [0.2.2]: https://github.com/jvolkman/pypackaging.bzl/releases/tag/v0.2.2
