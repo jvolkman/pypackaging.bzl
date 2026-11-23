@@ -95,6 +95,8 @@ pypackaging.markers.evaluate(marker, {"python_version": "3.12", "sys_platform": 
 # that is left to evaluate.
 left = pypackaging.markers.evaluate_partial(marker, {"python_version": "3.12"})
 pypackaging.markers.to_string(left)  # 'sys_platform == "linux"'
+pypackaging.markers.variables(marker)  # ["python_version", "sys_platform"]
+pypackaging.markers.format_full_version(struct(major = 3, minor = 14, micro = 0, releaselevel = "candidate", serial = 1))  # "3.14.0rc1"
 
 # Requirements: req.name, req.extras, req.specifier, req.url, req.marker,
 # req.marker_str.

@@ -455,6 +455,87 @@ def _test_marker_evaluate_partial_impl(env, _target):
     markers.evaluate_partial(parsed, {"extra": "bar"})
     env.expect.that_str(markers.to_string(parsed)).equals('(os_name == "a" or extra == "foo") and sys_platform == "x"')
 
+def _test_format_full_version_impl(env, _target):
+    # Struct inputs (like rules_python PyRuntimeInfo.interpreter_version_info).
+    env.expect.that_str(
+        markers.format_full_version(struct(major = 3, minor = 14, micro = 2, releaselevel = "final", serial = 0)),
+    ).equals("3.14.2")
+    env.expect.that_str(
+        markers.format_full_version(struct(major = 3, minor = 14, micro = 0, releaselevel = "candidate", serial = 1)),
+    ).equals("3.14.0rc1")
+    env.expect.that_str(
+        markers.format_full_version(struct(major = 3, minor = 15, micro = 0, releaselevel = "alpha", serial = 0)),
+    ).equals("3.15.0a0")
+    env.expect.that_str(
+        markers.format_full_version(struct(major = 3, minor = 14, micro = 0, releaselevel = "beta", serial = 2)),
+    ).equals("3.14.0b2")
+    env.expect.that_str(
+        markers.format_full_version(struct(major = 3, minor = 12, micro = None, releaselevel = None, serial = None)),
+    ).equals("3.12.0")
+    env.expect.that_str(
+        markers.format_full_version(struct(major = 3, minor = 12, micro = 1, releaselevel = "", serial = 5)),
+    ).equals("3.12.1")
+    env.expect.that_str(
+        markers.format_full_version(struct(major = 3, minor = 14, micro = 0, releaselevel = "final", serial = 99)),
+    ).equals("3.14.0")
+    env.expect.that_str(
+        markers.format_full_version(struct(major = 3, minor = 14, micro = 0, releaselevel = "candidate", serial = None)),
+    ).equals("3.14.0rc0")
+
+    # Dict inputs and string components.
+    env.expect.that_str(
+        markers.format_full_version({"major": 3, "minor": 13}),
+    ).equals("3.13.0")
+    env.expect.that_str(
+        markers.format_full_version({"major": "3", "minor": "14", "micro": "0", "releaselevel": "candidate", "serial": "2"}),
+    ).equals("3.14.0rc2")
+    env.expect.that_str(
+        markers.format_full_version({"major": 0, "minor": 0, "micro": 0}),
+    ).equals("0.0.0")
+
+def _test_marker_variables_impl(env, _target):
+    cases = [
+        ("", []),
+        ("os_name == 'posix'", ["os_name"]),
+        ("'posix' == os_name", ["os_name"]),
+        ("python_version >= '3.8' and sys_platform == 'linux'", ["python_version", "sys_platform"]),
+        ("sys_platform == 'linux' or sys_platform == 'darwin'", ["sys_platform"]),
+        # Dotted and legacy aliases are returned in canonical underscore form.
+        ("os.name == 'posix' and sys.platform == 'linux' and python_implementation == 'CPython'", [
+            "os_name",
+            "platform_python_implementation",
+            "sys_platform",
+        ]),
+        # String literals containing variable names are ignored.
+        ("sys_platform == 'extra' and platform_version == 'python_version'", [
+            "platform_version",
+            "sys_platform",
+        ]),
+        ("'extra' in extras", ["extras"]),
+        ("'dev' in dependency_groups and extra == 'foo'", ["dependency_groups", "extra"]),
+        # Comparing two variables collects both (except `extra == os_name`,
+        # where parse_marker converts the rhs to a normalized string literal).
+        ("os_name == sys_platform", ["os_name", "sys_platform"]),
+        ("extra == os_name", ["extra"]),
+        # String-to-string comparisons have no variables.
+        ("'a' == 'b'", []),
+        # Nested groups.
+        ("((python_full_version >= '3.12' and (platform_machine == 'aarch64' or extra == 'gpu')) or os_name == 'nt')", [
+            "extra",
+            "os_name",
+            "platform_machine",
+            "python_full_version",
+        ]),
+    ]
+    for src, expected in cases:
+        env.expect.where(marker = src).that_collection(
+            markers.variables(markers.parse(src)),
+        ).contains_exactly(expected).in_order()
+
+    # Deep nesting is handled iteratively.
+    deep = "(" * 500 + "extra == 'foo'" + ")" * 500
+    env.expect.that_collection(markers.variables(markers.parse(deep))).contains_exactly(["extra"])
+
 # Failure cases: (marker, environment overrides or None to only parse, expected
 # message fragments).
 _FAILURES = [
@@ -577,7 +658,32 @@ def _failure_tests(name):
     )
     expect_failure_test(test_name, test_name + "_subject", ["Undefined comparison"])
     names.append(test_name)
+
+    for i, (info_json, fragments) in enumerate([
+        (json.encode({"major": 3}), ["version_info must provide 'major' and 'minor'"]),
+        (json.encode({"minor": 14}), ["version_info must provide 'major' and 'minor'"]),
+        (json.encode({"major": 3, "minor": 14, "micro": 0, "releaselevel": "dev", "serial": 0}), ["Invalid releaselevel: \"dev\""]),
+    ]):
+        test_name = "{}_format_full_version_{}".format(name, i)
+        util.helper_target(
+            _format_full_version_failure_subject,
+            name = test_name + "_subject",
+            version_info_json = info_json,
+        )
+        expect_failure_test(test_name, test_name + "_subject", fragments)
+        names.append(test_name)
     return names
+
+def _format_full_version_failure_subject_impl(ctx):
+    markers.format_full_version(json.decode(ctx.attr.version_info_json))
+    return []
+
+_format_full_version_failure_subject = rule(
+    implementation = _format_full_version_failure_subject_impl,
+    attrs = {
+        "version_info_json": attr.string(mandatory = True),
+    },
+)
 
 def markers_test_suite(name):
     """Sets up the marker tests.
@@ -599,6 +705,8 @@ def markers_test_suite(name):
             "test_marker_grammar": _test_marker_grammar_impl,
             "test_marker_to_string": _test_marker_to_string_impl,
             "test_marker_evaluate_partial": _test_marker_evaluate_partial_impl,
+            "test_format_full_version": _test_format_full_version_impl,
+            "test_marker_variables": _test_marker_variables_impl,
         },
         extra_tests = failure_tests,
     )

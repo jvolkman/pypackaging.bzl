@@ -105,6 +105,50 @@ even if it could not change the result.
   evaluate.
 
 
+<a id="pypackaging.markers.format_full_version"></a>
+
+## pypackaging.markers.format_full_version
+
+<pre>
+load("@pypackaging.bzl", "pypackaging")
+
+pypackaging.markers.format_full_version(<a href="#pypackaging.markers.format_full_version-version_info">version_info</a>)
+</pre>
+
+Formats a `sys.version_info`-style struct or dict as a PEP 440/508 version string.
+
+Suitable for computing `python_full_version` and `implementation_version`
+marker values from a Python toolchain's `interpreter_version_info` struct
+or an equivalent dict.
+
+Fields read from `version_info`:
+- `major`, `minor` (required): integer or string components.
+- `micro` (optional, default `0`): integer or string component (`None` is
+  treated as `0`).
+- `releaselevel` (optional, default `"final"`): one of `"alpha"`, `"beta"`,
+  `"candidate"`, `"final"`, or `None`/`""` (treated as `"final"`).
+- `serial` (optional, default `0`): integer or string pre-release serial
+  used when `releaselevel` is not `"final"` (`0` is preserved, e.g.
+  `"3.15.0a0"`).
+
+`"candidate"` is formatted using canonical PEP 440 `"rc"` (matching
+`platform.python_version()` and comparing identically to `"c"` in PEP 508
+version markers).
+
+
+**PARAMETERS**
+
+
+| Name  | Description | Default Value |
+| :------------- | :------------- | :------------- |
+| <a id="pypackaging.markers.format_full_version-version_info"></a>version_info |  A `struct` (or provider) with attributes, or a `dict` with keys, describing the Python version.   |  none |
+
+**RETURNS**
+
+The formatted version string (e.g. `"3.14.2"`, `"3.14.0rc1"`,
+  `"3.15.0a0"`).
+
+
 <a id="pypackaging.markers.parse"></a>
 
 ## pypackaging.markers.parse
@@ -176,6 +220,38 @@ group are dropped. Fails if a string value contains both `"` and `'`.
 **RETURNS**
 
 The normalized marker string ("" for an empty tree).
+
+
+<a id="pypackaging.markers.variables"></a>
+
+## pypackaging.markers.variables
+
+<pre>
+load("@pypackaging.bzl", "pypackaging")
+
+pypackaging.markers.variables(<a href="#pypackaging.markers.variables-markers">markers</a>)
+</pre>
+
+Returns the sorted list of canonical variable names referenced by a marker.
+
+Traverses the parsed marker tree iteratively (no recursion limit). Because
+`parse` normalizes aliases (such as `os.name` -> `os_name` and
+`python_implementation` -> `platform_python_implementation`), all returned
+names are in canonical underscore form. String literals are ignored, so
+checking `"extra" in markers.variables(m)` does not false-positive on
+quoted strings containing `"extra"`.
+
+
+**PARAMETERS**
+
+
+| Name  | Description | Default Value |
+| :------------- | :------------- | :------------- |
+| <a id="pypackaging.markers.variables-markers"></a>markers |  A parsed marker tree (list), as returned by `parse`. An empty list returns `[]`.   |  none |
+
+**RETURNS**
+
+A sorted list of unique canonical marker variable names (strings).
 
 
 <a id="pypackaging.requirements.parse"></a>
