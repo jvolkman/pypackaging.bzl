@@ -5,7 +5,7 @@ load(":test_helpers.bzl", "unit_test_suite")
 
 # The complete public API.
 _PUBLIC_API = {
-    "markers": ["evaluate", "evaluate_partial", "parse", "to_string"],
+    "markers": ["evaluate", "evaluate_partial", "format_full_version", "parse", "to_string", "variables"],
     "requirements": ["parse", "to_string"],
     "specifiers": [
         "contains",
@@ -76,7 +76,9 @@ def _test_keyword_arguments_impl(env, _target):
     marker = p.markers.parse(marker_str = "os_name == 'nt'")
     env.expect.that_bool(p.markers.evaluate(markers = marker, environment = {"os_name": "nt"})).equals(True)
     env.expect.that_bool(p.markers.evaluate_partial(markers = marker, environment = {"os_name": "nt"})).equals(True)
+    env.expect.that_str(p.markers.format_full_version(version_info = struct(major = 3, minor = 14, micro = 0, releaselevel = "candidate", serial = 1))).equals("3.14.0rc1")
     env.expect.that_str(p.markers.to_string(markers = marker)).equals("os_name == \"nt\"")
+    env.expect.that_collection(p.markers.variables(markers = marker)).contains_exactly(["os_name"])
 
     req = p.requirements.parse(req_str = "foo>=1")
     env.expect.that_str(p.requirements.to_string(req = req)).equals("foo>=1")
@@ -108,6 +110,10 @@ def _test_readme_examples_impl(env, _target):
     env.expect.that_bool(pypackaging.markers.evaluate(marker, {"python_version": "3.12", "sys_platform": "linux"})).equals(True)
     left = pypackaging.markers.evaluate_partial(marker, {"python_version": "3.12"})
     env.expect.that_str(pypackaging.markers.to_string(left)).equals('sys_platform == "linux"')
+    env.expect.that_collection(pypackaging.markers.variables(marker)).contains_exactly(["python_version", "sys_platform"]).in_order()
+    env.expect.that_str(
+        pypackaging.markers.format_full_version(struct(major = 3, minor = 14, micro = 0, releaselevel = "candidate", serial = 1)),
+    ).equals("3.14.0rc1")
 
     req = pypackaging.requirements.parse("requests[socks]>=2.31; python_version >= '3.8'")
     env.expect.that_str(req.name).equals("requests")

@@ -78,6 +78,15 @@ def _check_markers():
         "extra == 'b' with extra = ['a', 'b']",
     )
 
+    _check(
+        markers.variables(parsed) == ["os_name", "python_version", "sys_platform"],
+        "markers.variables(parsed)",
+    )
+    _check(
+        markers.format_full_version(struct(major = 3, minor = 14, micro = 0, releaselevel = "candidate", serial = 1)) == "3.14.0rc1",
+        "markers.format_full_version(candidate)",
+    )
+
 def _check_requirements():
     req = pypackaging.requirements.parse("Foo_Bar[baz,qux]>=1.0,<2; python_version >= '3.8'")
     _check(req.name == "foo-bar", "requirement name")

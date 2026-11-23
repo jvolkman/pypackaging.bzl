@@ -256,6 +256,29 @@ def _conformance_marker_evaluate_partial(env):
 
 _tests.append(_conformance_marker_evaluate_partial)
 
+def _conformance_marker_variables(env):
+    failures = []
+    cases = [(marker, json.decode(overrides), want) for marker, overrides, want in EVALUATE_CASES]
+    cases.extend([(marker, {}, want) for marker, want in LOGIC_CASES])
+    for marker, overrides, want in cases:
+        full = dict(MARKER_ENV) | overrides
+        parsed = markers.parse(marker)
+        names = markers.variables(parsed)
+        minimal = {k: full[k] for k in names if k in full}
+        got = markers.evaluate_partial(parsed, minimal)
+        if type(got) != "bool":
+            # Only `extra` may be absent from `full` (defaults to "" in `evaluate`).
+            if markers.variables(got) != ["extra"]:
+                failures.append("{} with minimal {}: left {}".format(marker, names, markers.to_string(got)))
+                continue
+            got = markers.evaluate(got, minimal)
+        if got != want:
+            failures.append("{} with minimal {}: got {}, want {}".format(marker, names, got, want))
+
+    _expect_no_failures(env, failures)
+
+_tests.append(_conformance_marker_variables)
+
 # Tags
 
 def _conformance_get_supported(env):

@@ -966,9 +966,121 @@ def evaluate_markers_partial(markers, environment):
         return _join_groups(result)
     return result
 
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+_RELEASE_LEVEL_MAP = {
+    "alpha": "a",
+    "beta": "b",
+    "candidate": "rc",
+    "final": "",
+}
+
+def format_full_version(version_info):
+    """Formats a `sys.version_info`-style struct or dict as a PEP 440/508 version string.
+
+    Suitable for computing `python_full_version` and `implementation_version`
+    marker values from a Python toolchain's `interpreter_version_info` struct
+    or an equivalent dict.
+
+    Fields read from `version_info`:
+    - `major`, `minor` (required): integer or string components.
+    - `micro` (optional, default `0`): integer or string component (`None` is
+      treated as `0`).
+    - `releaselevel` (optional, default `"final"`): one of `"alpha"`, `"beta"`,
+      `"candidate"`, `"final"`, or `None`/`""` (treated as `"final"`).
+    - `serial` (optional, default `0`): integer or string pre-release serial
+      used when `releaselevel` is not `"final"` (`0` is preserved, e.g.
+      `"3.15.0a0"`).
+
+    `"candidate"` is formatted using canonical PEP 440 `"rc"` (matching
+    `platform.python_version()` and comparing identically to `"c"` in PEP 508
+    version markers).
+
+    Args:
+        version_info: A `struct` (or provider) with attributes, or a `dict`
+            with keys, describing the Python version.
+
+    Returns:
+        The formatted version string (e.g. `"3.14.2"`, `"3.14.0rc1"`,
+        `"3.15.0a0"`).
+    """
+    if type(version_info) == "dict":
+        major = version_info.get("major")
+        minor = version_info.get("minor")
+        micro = version_info.get("micro")
+        releaselevel = version_info.get("releaselevel")
+        serial = version_info.get("serial")
+    else:
+        major = getattr(version_info, "major", None)
+        minor = getattr(version_info, "minor", None)
+        micro = getattr(version_info, "micro", None)
+        releaselevel = getattr(version_info, "releaselevel", None)
+        serial = getattr(version_info, "serial", None)
+
+    if major == None or minor == None:
+        fail("version_info must provide 'major' and 'minor'")
+    if micro == None:
+        micro = 0
+    if not releaselevel or releaselevel == "final":
+        return "{}.{}.{}".format(major, minor, micro)
+
+    kind = _RELEASE_LEVEL_MAP.get(releaselevel)
+    if kind == None:
+        fail("Invalid releaselevel: {} (expected one of 'alpha', 'beta', 'candidate', 'final')".format(repr(releaselevel)))
+    if serial == None:
+        serial = 0
+    return "{}.{}.{}{}{}".format(major, minor, micro, kind, serial)
+
+def marker_variables(markers):
+    """Returns the sorted list of canonical variable names referenced by a marker.
+
+    Traverses the parsed marker tree iteratively (no recursion limit). Because
+    `parse` normalizes aliases (such as `os.name` -> `os_name` and
+    `python_implementation` -> `platform_python_implementation`), all returned
+    names are in canonical underscore form. String literals are ignored, so
+    checking `"extra" in markers.variables(m)` does not false-positive on
+    quoted strings containing `"extra"`.
+
+    Args:
+        markers: A parsed marker tree (list), as returned by `parse`. An empty
+            list returns `[]`.
+
+    Returns:
+        A sorted list of unique canonical marker variable names (strings).
+    """
+    if not markers:
+        return []
+
+    seen = {}
+    stack = [markers]
+    for _ in range(1 << 30):
+        if not stack:
+            break
+        node = stack.pop()
+        for entry in node:
+            entry_type = type(entry)
+            if entry_type == "tuple":
+                lhs, _, rhs = entry
+                if lhs.type == "variable":
+                    seen[lhs.value] = True
+                if rhs.type == "variable":
+                    seen[rhs.value] = True
+            elif entry_type == "list":
+                stack.append(entry)
+            elif entry == "and" or entry == "or":
+                pass
+            else:
+                fail("Unexpected marker: {}".format(entry))
+
+    return sorted(seen.keys())
+
 markers = struct(
     parse = parse_marker,
     evaluate = evaluate_markers,
     evaluate_partial = evaluate_markers_partial,
+    format_full_version = format_full_version,
     to_string = marker_to_string,
+    variables = marker_variables,
 )

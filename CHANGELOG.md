@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 While the version is 0.x, breaking changes are released as minor versions.
 
+## [Unreleased]
+
+### Added
+
+- `markers.format_full_version(version_info)` formats a `sys.version_info`-style
+  struct or dict as a PEP 440 / PEP 508 full version string (e.g. `"3.14.0rc1"`,
+  `"3.15.0a0"`).
+- `markers.variables(markers)` returns the sorted list of canonical variable
+  names referenced by a parsed marker tree.
+
 ## [0.4.0] - 2026-11-22
 
 Aligns the library with `pypa/packaging` 26.3 (plus `#1438` set-of-extras
